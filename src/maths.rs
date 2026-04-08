@@ -1,3 +1,7 @@
+#[allow(unused_imports)]
+use rayon::iter::ParallelIterator;
+#[allow(unused_imports)]
+use rayon::slice::ParallelSlice;
 use wide::f32x8;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -35,6 +39,10 @@ impl Metrics {
 /// SIMD-optimized cosine similarity
 /// Returns value in `[-1, 1]`
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
+        panic!("Vectors must not be empty");
+    }
     if a.len() != b.len() {
         panic!(
             "Vector dimensions must match, a: {}, b: {}",
@@ -87,6 +95,10 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// SIMD-optimized Euclidean similarity
 /// Returns value in `(0, 1]`
 pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
+        panic!("Vectors must not be empty");
+    }
     if a.len() != b.len() {
         panic!(
             "Vector dimensions must match, a: {}, b: {}",
@@ -123,6 +135,10 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// SIMD-optimized raw dot product
 /// Returns value in `[-inf, inf]`
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
+        panic!("Vectors must not be empty");
+    }
     if a.len() != b.len() {
         panic!(
             "Vector dimensions must match, a: {}, b: {}",
@@ -151,3 +167,31 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 
     total
 }
+
+/// Multiplies a matrix (flattened) with a vector, returning the resulting vector.
+/// The matrix is expected to be in row-major order and the dimensions must match.
+pub fn matrix_vec_mul(matrix: &[f32], vector: &[f32], dim: usize) -> Vec<f32> {
+    if dim == 0 {
+        panic!("Dimension must be greater than zero");
+    }
+    if vector.len() != dim || matrix.len() != dim * dim {
+        panic!(
+            "Dimension mismatch: matrix has {} rows, vector has {} elements, expected dimension {}",
+            matrix.len() / dim,
+            vector.len(),
+            dim
+        );
+    }
+
+    let mut vec = Vec::with_capacity(dim);
+    for i in 0..dim {
+        let row = &matrix[i * dim..(i + 1) * dim];
+        vec.push(dot_product(row, vector));
+    }
+
+    // matrix.par_chunks_exact(dim)
+    //     .map(|row| dot_product(row, vector))
+    //     .collect();
+
+    vec
+} // TODO: We can parallelize these since each row can be computed independently, then it would be ultra-blazing fast 🔥🔥🔥

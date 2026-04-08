@@ -49,6 +49,7 @@
 //!
 mod hnsw;
 mod maths;
+mod quant;
 mod storage;
 mod utils;
 
