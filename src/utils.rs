@@ -38,6 +38,14 @@ pub fn generate_random_vectors(
     result
 }
 
+/// Generates a random byte vector of given size, useful for testing with binary data or metadata.
+/// Each call produces different random bytes. (no seed)
+#[inline]
+pub fn get_random_bytes(size: u32) -> Vec<u8> {
+    let mut rng = rand::rng();
+    (0..size).map(|_| rng.random::<u8>()).collect()
+}
+
 #[test]
 fn test_seed_generation() {
     let num_vectors = 1000;

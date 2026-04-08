@@ -1,13 +1,9 @@
+use crate::maths::{Metrics, cosine_similarity, dot_product, euclidean_similarity};
 use anyhow::Result;
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelIterator;
-#[allow(unused)]
-use rayon::prelude::IntoParallelRefIterator;
+use rayon::iter::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use crate::maths::{cosine_similarity, dot_product, euclidean_similarity, Metrics};
 
 #[derive(Clone, Copy)]
 struct Candidate(NodeIndex, f32);
@@ -33,13 +29,6 @@ impl PartialOrd for Candidate {
     }
 }
 
-/// We want to quickly find the WORST result in our top-k (to know when to prune)
-/// By reversing the comparison, the heap top is the LOWEST similarity in our results
-/// pop() gives us the worst result, making pruning O(1)
-/// Example: results with similarities [0.9, 0.7, 0.5] (k=3)
-/// - Heap top will be 0.5 (lowest in our top-k)
-/// - When new candidate with 0.8 arrives:
-/// - 0.8 > 0.5 (worst), so we add it and pop the worst (0.5)
 #[derive(Clone, Copy)]
 struct ScoredResult(NodeIndex, f32);
 
@@ -64,23 +53,22 @@ impl PartialOrd for ScoredResult {
     }
 }
 
-const DEFAULT_EF_MULTIPLIER: usize = 4;
-const DEFAULT_EF_INC_FACTOR: f32 = 1.57575;
+pub const DEFAULT_EF_MULTIPLIER: usize = 4;
+pub const DEFAULT_EF_INC_FACTOR: f32 = 1.275;
 
-/// # Hierarchical Navigable Small World (HNSW)
+/// Hierarchical Navigable Small World (HNSW) [Quick ref](https://arxiv.org/pdf/1603.09320)
 ///
-/// ## Properties:
+/// Properties:
 /// - **Hierarchical**: Multiple layers with exponentially decreasing nodes per layer
 /// - **Navigable Small World**: Efficiently navigable graph structure at each layer
 /// - **Logarithmic search complexity**: O(log N) by searching from top to bottom layers
 /// - **Proper layer assignment**: Uses exponential distribution -ln(uniform) * 1/ln(M)
 ///
-/// ## Algorithm highlights:
+/// Algorithm highlights:
 /// **Insert**: Search from top layer down, connect at each layer bidirectionally
 /// **Search**: Greedy descent through upper layers, bounded search at bottom layer
 /// **Pruning**: Keep only M closest neighbors per node per layer
-/// **Tombstones**: Mark deleted nodes and skip during search, periodic cleanup
-
+/// **Tombstones**: Mark deleted nodes and skip during search, periodic cleanup & reindexing
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HNSW {
     /// All nodes in the graph, not layer-wise
@@ -98,13 +86,13 @@ pub struct HNSW {
     /// Similarity metric to use for distance calculations (default: Cosine)
     pub metrics: Option<Metrics>,
     /// Mapping from node ID (set by params) to array index
-    /// It's just a fucking HashMap for O(1) lookups, that's all it is, nothing fancy
+    /// It's just a fucking HashMap for O(1) lookups, for keep tracking that's all it is, nothing fancy
     id_mapper: HashMap<NodeID, NodeIndex>,
 }
 
 impl Default for HNSW {
     fn default() -> Self {
-        HNSW::new(18, 256, 16, 1.0, &Some(Metrics::Cosine))
+        HNSW::new(18, 256, 16, 1.0, Some(Metrics::Cosine), 512_000)
     }
 }
 
@@ -115,22 +103,23 @@ impl HNSW {
         ef_construction: usize,
         max_layers: usize,
         distribution_bias: f32,
-        metrics: &Option<Metrics>,
+        metrics: Option<Metrics>,
+        pre_allocate: usize,
     ) -> Self {
         HNSW {
-            nodes: Vec::with_capacity(128_000),
+            nodes: Vec::with_capacity(pre_allocate),
             entry_point: None,
             max_layers,
             max_neighbors,
             ef_construction,
-            distribution_bias,        // Currently unused
-            metrics: metrics.clone(), // Currently unused, default to cosine
-            id_mapper: HashMap::with_capacity(128_000),
+            distribution_bias, // Currently unused
+            metrics,
+            id_mapper: HashMap::with_capacity(pre_allocate),
         }
     }
 
-    /// Generates a random level for a new node based on an exponential distribution.
-    /// Uses the HNSW paper formula: floor(-ln(rand) * 1/ln(M))
+    /// Generates a random level for a new node based on an exponential distribution uses the HNSW paper formula: floor(-ln(rand) * 1/ln(M))
+    /// Used in [`insert`](HNSW::insert), or you may use your own distribution curve
     pub fn get_random_level(&self) -> usize {
         let r: f32 = rand::random::<f32>().max(1e-9);
         let m = 1.0 / (self.max_neighbors as f32).ln();
@@ -150,25 +139,25 @@ impl HNSW {
     /// 2. Otherwise, search from top layer down to find nearest neighbors
     /// 3. Connect the new node to its neighbors at each layer
     ///
-    /// # Arguments
+    /// Arguments
     /// * `node_id` - User-provided node ID (must be unique)
     /// * `vector` - The vector to insert
     /// * `metadata` - Metadata associated with the node
     /// * `max_level` - The maximum level for this node
     ///
-    /// # Returns
+    /// Returns
     /// * `Ok(NodeId)` - The array index of the newly inserted node in the nodes vector
     /// * `Err` - If the node_id already exists
     pub fn insert(
         &mut self,
         vector_id: String,
         vector: &[f32],
-        metadata: String,
+        metadata: Vec<u8>,
         max_level: usize,
     ) -> Result<NodeIndex> {
         // Check for duplicate node_id
         if self.id_mapper.contains_key(&vector_id) {
-            return Err(anyhow::anyhow!("node ID '{}' already exists", vector_id));
+            return Err(anyhow::anyhow!("Node ID '{}' already exists", vector_id));
         }
 
         let node_id = self.nodes.len();
@@ -224,8 +213,6 @@ impl HNSW {
                 if layer <= self.nodes[neighbor_id].max_level {
                     self.nodes[node_id].neighbors[layer].push(neighbor_id);
                     self.nodes[neighbor_id].neighbors[layer].push(node_id);
-
-                    // Prune neighbor's connections if it has too many
                     if self.nodes[neighbor_id].neighbors[layer].len() > self.max_neighbors {
                         self.prune_connections(neighbor_id, layer);
                     }
@@ -417,7 +404,7 @@ impl HNSW {
         }
     }
 
-    /// Similarity metric: cosine similarity, Euclidean similarity, or raw dot product
+    /// Similarity [`metric`](Metrics): cosine similarity, Euclidean similarity, or raw dot product etc
     #[inline]
     fn similarity(&self, a: &[f32], b: &[f32], metrics: Option<&Metrics>) -> f32 {
         match metrics {
@@ -499,16 +486,16 @@ impl HNSW {
 
     #[inline]
     /// Search and return results with metadata
-    /// Returns results as (node_id, similarity, metadata) tuples sorted by similarity (highest first)
+    /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
     pub fn search_with_metadata(
         &self,
         query: &[f32],
         k: usize,
         ef_search: Option<usize>,
-    ) -> Vec<(String, f32, String)> {
+    ) -> Vec<(String, f32, Vec<u8>)> {
         let results = self.search(query, k, ef_search);
         results
-            .into_iter()
+            .into_par_iter()
             .map(|(node_id, sim)| {
                 let metadata = self
                     .id_mapper
@@ -522,7 +509,9 @@ impl HNSW {
     }
 
     #[inline]
-    /// Brute-force search for testing and validation. Returns all nodes sorted by similarity (highest first).
+    /// Brute-force parallel search for testing and validation.
+    /// Returns similar to [`search`](HNSW::search)
+    /// > Parallel overhead trade-offs are not always good!!
     pub fn brute_force_search(&self, query: &[f32], k: usize) -> Vec<(String, f32)> {
         let mut results: Vec<(String, f32)> = self
             .nodes
@@ -543,11 +532,14 @@ impl HNSW {
     }
 
     #[inline]
+    /// Brute-force parallel search with metadata included in results.
+    /// Returns similiar to [`search_with_metadata`](HNSW::search_with_metadata)
+    /// > Parallel overhead are not good especially for small index
     pub fn brute_force_search_with_metadata(
         &self,
         query: &[f32],
         k: usize,
-    ) -> Vec<(String, f32, String)> {
+    ) -> Vec<(String, f32, Vec<u8>)> {
         let results = self.brute_force_search(query, k);
         results
             .into_iter()
@@ -561,15 +553,16 @@ impl HNSW {
             .collect()
     }
 
-    /// Delete a node by node ID
+    /// Delete a node by node ID (Tombstone)
     /// If the deleted node is the entry point, finds a new one
+    /// Returns err if node ID not found
     #[inline]
     pub fn delete_node_by_id(&mut self, node_id: &str) -> Result<()> {
         let node_id = self
             .id_mapper
             .get(node_id)
             .copied()
-            .ok_or_else(|| anyhow::anyhow!("node ID '{}' not found", node_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Node ID '{}' not found", node_id))?;
 
         // Mark as tombstone
         self.mark_tombstone(node_id)?;
@@ -584,7 +577,7 @@ impl HNSW {
         Ok(())
     }
 
-    /// Get node by ID
+    /// Get node by ID, returns an Option type
     #[inline]
     pub fn get_node_by_id(&self, node_id: &str) -> Option<&Node> {
         self.id_mapper
@@ -732,6 +725,7 @@ impl HNSW {
 pub type NodeIndex = usize;
 
 /// Unique identifier for a node. (Stable across reindexing)
+/// It's just a string that user provides when inserting a node, and we map it to an array index internally for O(1) access)
 pub type NodeID = String;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -740,10 +734,10 @@ pub struct Node {
     /// node identifier - stable across reindexing
     pub node_id: NodeID,
     /// Metadata associated with the node
-    pub metadata: String, // String for now, I guess? TODO: make generic or JSON VALUE?
+    pub metadata: Vec<u8>, // TODO: Make it generic?
     /// Vector representation of the node, any dimensionality
     pub vector: Vec<f32>,
-    /// Neighbors per layer, e.g neighbors[0] is the list of neighbors in layer 0
+    /// Neighbors per layer, e.g `neighbors[0]` is the list of neighbors in layer 0
     pub neighbors: Vec<Vec<NodeIndex>>,
     /// The highest layer this node exists in
     pub max_level: usize,
@@ -753,7 +747,7 @@ pub struct Node {
 
 impl Node {
     /// Creates a new Node with the given id, vector, metadata, and max_level.
-    pub fn new(id: String, vector: Vec<f32>, metadata: String, max_level: usize) -> Self {
+    pub fn new(id: String, vector: Vec<f32>, metadata: Vec<u8>, max_level: usize) -> Self {
         Node {
             node_id: id,
             metadata,

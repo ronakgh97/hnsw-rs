@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wide::f32x8;
 
+/// Supported similarity metrics for vector search
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Metrics {
     Cosine,
@@ -9,6 +10,7 @@ pub enum Metrics {
 }
 
 impl Metrics {
+    /// Calculate similarity between two vectors based on the selected metric
     #[inline]
     pub fn calculate(&self, a: &[f32], b: &[f32]) -> f32 {
         match self {
@@ -18,6 +20,7 @@ impl Metrics {
         }
     }
 
+    /// Get string representation for logging/debugging
     #[inline]
     pub fn string(&self) -> String {
         match self {
@@ -28,11 +31,17 @@ impl Metrics {
     }
 }
 
-#[inline]
-/// SIMD-optimized cosine similarity using 8-wide f32 vectors
-/// Returns value in [-1, 1]
+#[inline(always)]
+/// SIMD-optimized cosine similarity
+/// Returns value in `[-1, 1]`
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "Vector dimensions must match");
+    if a.len() != b.len() {
+        panic!(
+            "Vector dimensions must match, a: {}, b: {}",
+            a.len(),
+            b.len()
+        );
+    }
 
     let chunks = a.len() / 8;
     let mut dot = f32x8::ZERO;
@@ -74,11 +83,17 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-#[inline]
+#[inline(always)]
 /// SIMD-optimized Euclidean similarity
-/// Returns value in (0, 1]
+/// Returns value in `(0, 1]`
 pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "Vector dimensions must match");
+    if a.len() != b.len() {
+        panic!(
+            "Vector dimensions must match, a: {}, b: {}",
+            a.len(),
+            b.len()
+        );
+    }
 
     let chunks = a.len() / 8;
     let mut sum_sq = f32x8::ZERO;
@@ -104,11 +119,17 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     1.0 / (1.0 + distance_sq.sqrt())
 }
 
-#[inline]
+#[inline(always)]
 /// SIMD-optimized raw dot product
+/// Returns value in `[-inf, inf]`
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "Vector dimensions must match");
-
+    if a.len() != b.len() {
+        panic!(
+            "Vector dimensions must match, a: {}, b: {}",
+            a.len(),
+            b.len()
+        );
+    }
     let chunks = a.len() / 8;
     let mut sum = f32x8::ZERO;
 
