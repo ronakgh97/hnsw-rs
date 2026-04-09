@@ -5,9 +5,9 @@ edition = "2024"
 authors = ["ronakgh97@gmail.com"]
 description = "A Simple implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
 license = "MIT"
-repository = "https:/github.com/ronakgh97/hnsw_rs"
-homepage = "https:/github.com/ronakgh97/hnsw_rs"
-documentation = "https:/github.com/ronakgh97/hnsw_rs/master/README.md"
+repository = "https:/github.com/ronakgh97/hnsw-rs"
+homepage = "https:/github.com/ronakgh97/hnsw-rs"
+documentation = "https:/github.com/ronakgh97/hnsw-rs/master/README.md"
 
 [lib]
 name = "hnsw_rs"
@@ -22,4 +22,7 @@ anyhow = "1.0.102"
 memmap2 = "0.9.10"
 sha2 = "0.11.0"
 hex = "0.4.3"
-serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+arrow = "58.1.0"
+parquet = "58.1.0"
