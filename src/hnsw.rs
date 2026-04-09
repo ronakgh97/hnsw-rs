@@ -5,6 +5,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use wincode::{SchemaRead, SchemaWrite};
 
+//TODO: rm clones, replace hashset, optional parallel,
+// introduce sim_cache and reduce sim calculation, fix sorting,
+// reduce reallocation in search loops (use small buffer), proper preallocation, fix memory layout
+// batch simd_calculation somehow?,
+
 #[derive(Clone, Copy)]
 struct Candidate(NodeIndex, f32);
 
@@ -19,7 +24,7 @@ impl Eq for Candidate {}
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // pop() gives us the HIGHEST similarity candidate
-        self.1.partial_cmp(&other.1).unwrap()
+        self.1.total_cmp(&other.1)
     }
 }
 
@@ -43,7 +48,7 @@ impl Eq for ScoredResult {}
 impl Ord for ScoredResult {
     fn cmp(&self, other: &Self) -> Ordering {
         // peek() gives us the WORST result in our top-k
-        other.1.partial_cmp(&self.1).unwrap()
+        other.1.total_cmp(&self.1)
     }
 }
 
@@ -69,7 +74,6 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.275;
 /// **Search**: Greedy descent through upper layers, bounded search at bottom layer
 /// **Pruning**: Keep only M closest neighbors per node per layer
 /// **Tombstones**: Mark deleted nodes and skip during search, periodic cleanup & reindexing
-///
 ///
 ///```
 ///use hnsw_rs::prelude::*;
@@ -154,17 +158,22 @@ impl HNSW {
         // level.min(self.max_layers - 1)
     }
 
+    // /// Same as [`insert`](HNSW::insert), but [`level assignments`](HNSW::get_random_level) internally
+    // pub fn insert_auto(
+    //     &mut self,
+    //     node_id: String,
+    //     vector: &[f32],
+    //     metadata: Vec<u8>,
+    // ) -> Result<NodeIndex> {
+    //     let level = self.get_random_level();
+    //     self.insert(node_id, vector, metadata, level)
+    // }
+
     /// Insert a new node into the HNSW graph
     /// This is the core HNSW algorithm:
-    /// 1. If first node, just add it as entry point
-    /// 2. Otherwise, search from top layer down to find nearest neighbors
-    /// 3. Connect the new node to its neighbors at each layer
-    ///
-    /// Arguments
-    /// * `node_id` - User-provided node ID (must be unique)
-    /// * `vector` - The vector to insert
-    /// * `metadata` - Metadata associated with the node
-    /// * `max_level` - The maximum level for this node
+    /// - If first node, just add it as entry point
+    /// - Otherwise, search from top layer down to find nearest neighbors
+    /// - Connect the new node to its neighbors at each layer
     ///
     /// Returns
     /// * `Ok(NodeId)` - The array index of the newly inserted node in the nodes vector
@@ -349,7 +358,7 @@ impl HNSW {
                         );
 
                         // WHATDAFAK: should we add this neighbor to our search frontier?
-                        // Add if: we haven't filled ef slots OR new node is better than our worst
+                        // Add if we haven't filled ef slots OR new node is better than our worst
                         let worst_if_full = results.peek().map(|r| r.1);
                         let should_add = match (results.len(), worst_if_full) {
                             (len, _) if len < ef => true,            // still filling

@@ -1,7 +1,4 @@
-#[allow(unused_imports)]
-use rayon::iter::ParallelIterator;
-#[allow(unused_imports)]
-use rayon::slice::ParallelSlice;
+use rayon::prelude::*;
 use wide::f32x8;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -136,7 +133,7 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Returns value in `[-inf, inf]`
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     if a.is_empty() || b.is_empty() {
-        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
+        // Yes, I'm doing this *unnecessary* check, because I like symmetric, so stfu
         panic!("Vectors must not be empty");
     }
     if a.len() != b.len() {
@@ -169,8 +166,10 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Multiplies a matrix (flattened) with a vector, returning the resulting vector.
-/// The matrix is expected to be in row-major order and the dimensions must match.
-pub fn matrix_vec_mul(matrix: &[f32], vector: &[f32], dim: usize) -> Vec<f32> {
+/// The matrix is expected to be in row-major order and the dimensions must match,
+/// > `parallel` is experimental and can be slow!!
+#[inline(always)]
+pub fn matrix_vec_mul(matrix: &[f32], vector: &[f32], dim: usize, parallel: bool) -> Vec<f32> {
     if dim == 0 {
         panic!("Dimension must be greater than zero");
     }
@@ -183,15 +182,72 @@ pub fn matrix_vec_mul(matrix: &[f32], vector: &[f32], dim: usize) -> Vec<f32> {
         );
     }
 
-    let mut vec = Vec::with_capacity(dim);
-    for i in 0..dim {
-        let row = &matrix[i * dim..(i + 1) * dim];
-        vec.push(dot_product(row, vector));
+    if parallel {
+        let chunk_rows = dim / rayon::current_num_threads().max(24);
+        // let mut result = Vec::with_capacity(dim);
+        // unsafe { result.set_len(dim) }; // We will fill all elements before reading, and we won't read uninitialized data
+        let mut result = vec![0.0f32; dim];
+
+        result
+            .par_chunks_mut(chunk_rows)
+            .enumerate()
+            .for_each(|(chunk_idx, out_chunk)| {
+                let start_row = chunk_idx * chunk_rows;
+
+                for (i, out) in out_chunk.iter_mut().enumerate() {
+                    let row_idx = start_row + i;
+                    if row_idx >= dim {
+                        break;
+                    }
+
+                    let row = &matrix[row_idx * dim..(row_idx + 1) * dim];
+                    *out = dot_product(row, vector);
+                }
+            });
+
+        return result;
     }
 
-    // matrix.par_chunks_exact(dim)
-    //     .map(|row| dot_product(row, vector))
-    //     .collect();
+    let mut vec = vec![0.0f32; dim];
+    for (i, out) in vec.iter_mut().enumerate() {
+        let row = &matrix[i * dim..(i + 1) * dim];
+        *out = dot_product(row, vector);
+    }
 
     vec
 } // TODO: We can parallelize these since each row can be computed independently, then it would be ultra-blazing fast 🔥🔥🔥
+
+#[test]
+#[ignore]
+fn matrix_mul_test() {
+    let dims = 4096;
+    let mat = crate::utils::generate_random_vectors(1, dims * dims, 100, true)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<f32>>();
+    let vec = crate::utils::generate_random_vectors(1, dims, 101, true)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<f32>>();
+
+    let result = matrix_vec_mul(&mat, &vec, dims, false);
+
+    assert_eq!(result.len(), vec.len());
+
+    let time_seq = std::time::Instant::now();
+    let _ = matrix_vec_mul(&mat, &vec, dims, false);
+    let elapsed_seq = time_seq.elapsed();
+
+    let time_parallel = std::time::Instant::now();
+    let _ = matrix_vec_mul(&mat, &vec, dims, true);
+    let elapsed_parallel = time_parallel.elapsed();
+
+    println!(
+        "MatMul took {:?} sequentially and {:?} in parallel",
+        elapsed_seq, elapsed_parallel
+    );
+    assert!(
+        elapsed_parallel < elapsed_seq,
+        "Parallel version should be faster than sequential"
+    );
+}

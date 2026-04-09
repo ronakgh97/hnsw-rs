@@ -3,8 +3,8 @@ use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
 
 /// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`, still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality), but useful for benchmarking and testing
-/// `base_seed` is used to ensure reproducibility of generated vectors across runs. Each vector will have a different seed derived from `base_seed` to ensure different random values.
-/// > Parallel overhead can be significant for large `num` and `dimensions`, but for small sizes, the sequential version may be faster for better gains.
+/// `base_seed` is used to ensure reproducibility across runs. Each vector will have a different seed derived from `base_seed` to ensure different random values.
+/// > `parallel` can be significant for large `num` and `dimensions`, but for small sizes, the sequential version may be faster for better gains.
 #[inline]
 pub fn generate_random_vectors(
     num: usize,
@@ -13,25 +13,24 @@ pub fn generate_random_vectors(
     parallel: bool,
 ) -> Vec<Vec<f32>> {
     if parallel {
-        return (0..num)
-            .into_par_iter()
-            .map(|i| {
-                let mut rng = SmallRng::seed_from_u64(base_seed.wrapping_add(i as u64));
-                let mut v = Vec::with_capacity(dimensions);
-                for _ in 0..dimensions {
-                    v.push(rng.random_range(-1.0..1.0));
-                }
-                v
-            })
-            .collect();
+        let mut result = vec![vec![0.0f32; dimensions]; num];
+
+        result.par_iter_mut().enumerate().for_each(|(i, v)| {
+            let mut rng = SmallRng::seed_from_u64(base_seed.wrapping_add(i as u64));
+            for x in v {
+                *x = rng.random_range(-1.0..1.0);
+            }
+        });
+
+        return result;
     }
 
     let mut result = Vec::with_capacity(num);
     for i in 0..num {
         let mut rng = SmallRng::seed_from_u64(base_seed.wrapping_add(i as u64));
-        let mut v = Vec::with_capacity(dimensions);
-        for _ in 0..dimensions {
-            v.push(rng.random_range(-1.0..1.0));
+        let mut v = vec![0.0f32; dimensions];
+        for i in &mut v {
+            *i = rng.random_range(-1.0..1.0);
         }
         result.push(v);
     }
