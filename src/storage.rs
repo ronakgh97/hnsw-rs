@@ -29,7 +29,7 @@ impl Storage {
     }
 
     /// Writes an HNSW index to disk and returns the sha256 checksum of the index
-    pub fn flush_to_disk(path: &path::Path, index: HNSW) -> anyhow::Result<String> {
+    pub fn flush_to_disk(path: &path::Path, index: &HNSW) -> anyhow::Result<String> {
         let path = path.to_path_buf();
         let config = wincode::config::Configuration::default()
             .enable_zero_copy_align_check()

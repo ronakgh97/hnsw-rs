@@ -41,14 +41,14 @@ fn test_hnsw_search_returns_correct_k() {
     let num_vectors = 20;
     let dimensions = 32;
 
-    let vectors = generate_random_vectors(num_vectors, dimensions, 42, false);
+    let vectors = gen_vec(num_vectors, dimensions, 42);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[0].clone();
+    let query = vectors.0[0].clone();
     let results = hnsw.search(&query, 5, None);
 
     assert_eq!(results.len(), 5);
@@ -58,14 +58,14 @@ fn test_hnsw_search_returns_correct_k() {
 #[test]
 fn test_hnsw_search_with_different_ef() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(50, 64, 99, false);
+    let vectors = gen_vec(50, 64, 99);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[10].clone();
+    let query = vectors.0[10].clone();
 
     let results_ef10 = hnsw.search(&query, 5, Some(10));
     let results_ef50 = hnsw.search(&query, 5, Some(50));
@@ -128,7 +128,7 @@ fn test_hnsw_search_with_euclidean_metric() {
 
 #[test]
 fn test_hnsw_search_with_dot_product_metric() {
-    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::DotProduct), 1000);
+    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::RawDot), 1000);
 
     let vectors = [
         vec![1.0, 0.0, 0.0],
@@ -148,14 +148,14 @@ fn test_hnsw_search_with_dot_product_metric() {
 #[test]
 fn test_hnsw_brute_force_search() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(30, 32, 123, false);
+    let vectors = gen_vec(30, 32, 123);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[5].clone();
+    let query = vectors.0[5].clone();
 
     let hnsw_results = hnsw.search(&query, 5, None);
     let brute_force_results = hnsw.brute_force_search(&query, 5);
@@ -169,9 +169,9 @@ fn test_hnsw_brute_force_search() {
 #[test]
 fn test_hnsw_delete_node() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(10, 32, 1, false);
+    let vectors = gen_vec(10, 32, 1);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
@@ -194,9 +194,9 @@ fn test_hnsw_delete_nonexistent() {
 #[test]
 fn test_hnsw_tombstone_ratio() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(10, 32, 2, false);
+    let vectors = gen_vec(10, 32, 2);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
@@ -213,9 +213,9 @@ fn test_hnsw_tombstone_ratio() {
 #[test]
 fn test_hnsw_reindex() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(10, 32, 3, false);
+    let vectors = gen_vec(10, 32, 3);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
@@ -234,14 +234,14 @@ fn test_hnsw_reindex() {
 #[test]
 fn test_hnsw_reindex_preserves_search() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(20, 32, 4, false);
+    let vectors = gen_vec(20, 32, 4);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[5].clone();
+    let query = vectors.0[5].clone();
     let before_reindex = hnsw.search(&query, 5, None);
 
     hnsw.delete_node_by_id("0").unwrap();
@@ -303,9 +303,9 @@ fn test_hnsw_duplicate_insert() {
 #[test]
 fn test_hnsw_active_count() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(5, 16, 5, false);
+    let vectors = gen_vec(5, 16, 5);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
@@ -321,16 +321,16 @@ fn test_hnsw_active_count() {
 #[test]
 fn test_hnsw_search_preserves_entry_point() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(10, 32, 6, false);
+    let vectors = gen_vec(10, 32, 6);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
     let entry_before = hnsw.entry_point;
 
-    hnsw.search(&vectors[0], 3, None);
+    hnsw.search(&vectors.0[0], 3, None);
 
     assert_eq!(hnsw.entry_point, entry_before);
 }
@@ -338,16 +338,16 @@ fn test_hnsw_search_preserves_entry_point() {
 #[test]
 fn test_hnsw_multiple_searches() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(30, 48, 7, false);
+    let vectors = gen_vec(30, 48, 7);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
     for i in 0..10 {
         let idx = (i * 7919) % 30;
-        let query = vectors[idx].clone();
+        let query = vectors.0[idx].clone();
         let results = hnsw.search(&query, 5, None);
         assert_eq!(results.len(), 5);
     }
@@ -356,14 +356,14 @@ fn test_hnsw_multiple_searches() {
 #[test]
 fn test_hnsw_with_large_vectors() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(50, 512, 8, false);
+    let vectors = gen_vec(50, 512, 8);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[25].clone();
+    let query = vectors.0[25].clone();
     let results = hnsw.search(&query, 10, None);
 
     assert_eq!(results.len(), 10);
@@ -372,14 +372,14 @@ fn test_hnsw_with_large_vectors() {
 #[test]
 fn test_hnsw_with_high_ef_construction() {
     let mut hnsw = HNSW::new(16, 512, 4, 1.0, Some(Metrics::Cosine), 1000);
-    let vectors = generate_random_vectors(20, 32, 9, false);
+    let vectors = gen_vec(20, 32, 9);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[10].clone();
+    let query = vectors.0[10].clone();
     let results = hnsw.search(&query, 5, None);
 
     assert_eq!(results.len(), 5);
@@ -388,14 +388,14 @@ fn test_hnsw_with_high_ef_construction() {
 #[test]
 fn test_hnsw_search_results_sorted_by_similarity() {
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(20, 32, 10, false);
+    let vectors = gen_vec(20, 32, 10);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    let query = vectors[0].clone();
+    let query = vectors.0[0].clone();
     let results = hnsw.search(&query, 5, None);
 
     for i in 1..results.len() {

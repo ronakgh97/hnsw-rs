@@ -2,7 +2,7 @@
 //!
 //! An implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search.
 //! This implementation is inspired by this [paper](https://arxiv.org/pdf/1603.09320)
-//! but isn't fully based on that, I have done some my own simplifications and is reasonably efficient for most use cases, but not optimized for production use yet, and is still in early stages of development [GitHub](https://github.com/ronakgh97/hnsw_rs)
+//! but isn't fully based on that, I have done some my own simplifications and is reasonably efficient for most use cases, but not optimized for production use yet, and is still in early stages of development [GitHub](https://github.com/ronakgh97/hnsw-rs)
 //!
 //! ## Quick Start
 //!
@@ -57,19 +57,19 @@ pub mod prelude {
     pub use crate::hnsw::*;
     pub use crate::maths::*;
     pub use crate::storage::*;
-    pub use crate::utils::{generate_random_vectors, get_random_bytes};
+    pub use crate::utils::{gen_fill, gen_vec, get_random_bytes};
 }
 
 #[test]
 fn basic_insert_test() {
     use crate::prelude::*;
     let mut hnsw = HNSW::default();
-    let vectors = generate_random_vectors(10, 128, 42, false);
+    let vectors = gen_vec(32, 128, 42);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for (i, vector) in vectors.0.iter().enumerate() {
         let level = hnsw.get_random_level();
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    assert_eq!(hnsw.nodes.len(), 10);
+    assert_eq!(hnsw.nodes.len(), 32);
 }

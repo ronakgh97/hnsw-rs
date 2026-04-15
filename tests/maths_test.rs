@@ -112,7 +112,7 @@ fn test_metrics_enum_euclidean() {
 
 #[test]
 fn test_metrics_enum_dot_product() {
-    let metric = Metrics::DotProduct;
+    let metric = Metrics::RawDot;
     let a = vec![2.0, 3.0];
     let b = vec![4.0, 5.0];
     let sim = metric.calculate(&a, &b);
@@ -123,7 +123,7 @@ fn test_metrics_enum_dot_product() {
 fn test_metrics_string() {
     assert_eq!(Metrics::Cosine.string(), "COSINE");
     assert_eq!(Metrics::Euclidean.string(), "EUCLIDEAN");
-    assert_eq!(Metrics::DotProduct.string(), "DOT_PRODUCT");
+    assert_eq!(Metrics::RawDot.string(), "DOT_PRODUCT");
 }
 
 #[test]

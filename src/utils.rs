@@ -2,7 +2,8 @@ use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 use rayon::prelude::*;
 
-/// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`, still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality), but useful testing
+/// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`,
+/// Still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality), but useful testing
 /// Returns a tuple of (generated vectors, final seed).
 #[inline]
 pub fn gen_vec(num: usize, dim: usize, base_seed: u64) -> (Vec<Vec<f32>>, u64) {
