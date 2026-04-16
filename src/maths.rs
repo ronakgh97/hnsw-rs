@@ -428,7 +428,7 @@ fn transpose_mat_into(rows: usize, cols: usize, matrix: &[f32], output: &mut [f3
 fn test_maths() {
     use crate::utils::gen_vec;
     use std::time::Instant;
-    let run = 2048;
+    let run = 2148;
     let dim = 1536;
 
     let (vec, _seed) = gen_vec(2, dim, 42);

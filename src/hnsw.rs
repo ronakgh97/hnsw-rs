@@ -5,10 +5,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use wincode::{SchemaRead, SchemaWrite};
 
-//TODO: rm clones, replace hashset, optional parallel,
+//TODO: rm clones, replace hashset wit bitset, optional parallel,
 // introduce sim_cache and reduce sim calculation, fix sorting,
 // reduce reallocation in search loops (use small buffer), proper preallocation, fix memory layout
-// batch simd_calculation somehow?,
+// batch simd_calculation somehow?, add better checks for public api, imp error handling
+// add pub, pri field to separate clean api, and provide clean abstraction for users
 
 #[derive(Clone, Copy)]
 struct Candidate(NodeIndex, f32);
@@ -197,10 +198,7 @@ impl HNSW {
             node_id: vector_id.clone(),
             metadata,
             vector: vector.to_vec(),
-            neighbors: vec![
-                Vec::with_capacity(self.max_neighbors * self.max_layers);
-                max_level + 1
-            ],
+            neighbors: vec![Vec::with_capacity(self.max_neighbors); max_level + 1],
             max_level,
             tombstone: false,
         };
@@ -214,7 +212,6 @@ impl HNSW {
             return Ok(node_id);
         }
 
-        let new_vector = node.vector.clone();
         self.nodes.push(node);
 
         // Start search from entry point
@@ -224,22 +221,24 @@ impl HNSW {
         // Greedily traverse from top layer down to new node's level + 1
         // Just find the closest node, don't connect yet
         for layer in (max_level + 1..=entry_level).rev() {
-            current_nearest = self.search_layer_greedy(&new_vector, current_nearest, layer);
+            current_nearest =
+                self.search_layer_greedy(&self.nodes[node_id].vector, current_nearest, layer);
         }
 
         // From new node's max_level down to 0, find neighbors and connect
         for layer in (0..=max_level).rev() {
             // Find ef_construction nearest neighbors at this layer
-            let candidates =
-                self.search_layer_knn(&new_vector, current_nearest, self.ef_construction, layer);
+            let candidates = self.search_layer_knn(
+                &self.nodes[node_id].vector,
+                current_nearest,
+                self.ef_construction,
+                layer,
+            );
 
-            let selected: Vec<NodeIndex> = candidates
-                .into_par_iter()
-                .take(self.max_neighbors)
-                .collect();
+            let selected_count = candidates.len().min(self.max_neighbors);
 
             // Connect new node to its neighbors (bidirectional!!)
-            for &neighbor_id in &selected {
+            for &(neighbor_id, _) in &candidates[..selected_count] {
                 if layer <= self.nodes[neighbor_id].max_level {
                     self.nodes[node_id].neighbors[layer].push(neighbor_id);
                     self.nodes[neighbor_id].neighbors[layer].push(node_id);
@@ -250,8 +249,8 @@ impl HNSW {
             }
 
             // Update current nearest for next layer
-            if !selected.is_empty() {
-                current_nearest = selected[0];
+            if let Some((nearest_id, _)) = candidates.first() {
+                current_nearest = *nearest_id;
             }
         }
 
@@ -276,7 +275,7 @@ impl HNSW {
             // Check all neighbors at this layer
             if layer <= self.nodes[current].max_level {
                 for &neighbor_id in &self.nodes[current].neighbors[layer] {
-                    // Skip tombstoned nodes during search
+                    // Skip tombstone nodes during search
                     if self.nodes[neighbor_id].tombstone {
                         continue;
                     }
@@ -302,13 +301,13 @@ impl HNSW {
     /// Uses a BOUNDED search with ef parameter (critical for performance)
     ///
     /// ALGORITHM:
-    /// 1. Start with entry point in both candidates and results
-    /// 2. Pop highest similarity candidate from heap (best-first)
-    /// 3. If candidate is worse than our worst result, skip (prune)
-    /// 4. Otherwise, explore all its neighbors
-    /// 5. Add promising neighbors to candidates AND results (if better than worst)
-    /// 6. Repeat until candidates empty
-    /// 7. Return top-k results sorted by similarity
+    /// - Start with entry point in both candidates and results
+    /// - Pop highest similarity candidate from heap (best-first)
+    /// - If candidate is worse than our worst result, skip (prune)
+    /// - Otherwise, explore all its neighbors
+    /// - Add promising neighbors to candidates AND results (if better than worst)
+    /// - Repeat until candidates empty
+    /// - Return top-k results sorted by similarity with computed similarity
     ///
     /// COMPLEXITY: O(log n) per operation instead of O(n log n)
     fn search_layer_knn(
@@ -317,12 +316,14 @@ impl HNSW {
         entry: NodeIndex,
         ef: usize,
         layer: usize,
-    ) -> Vec<NodeIndex> {
-        let mut visited = HashSet::with_capacity(self.nodes.len());
+    ) -> Vec<(NodeIndex, f32)> {
+        let ef = ef.max(1);
+        let capacity = ef.saturating_mul(2).max(1);
+        let mut visited = HashSet::with_capacity(capacity);
 
-        // CANDIDATES heap: explore highest similarity first
+        // CANDIDATES Heap: explore highest similarity first
         // pop() gives us the most promising node to explore next
-        let mut candidates: BinaryHeap<Candidate> = BinaryHeap::with_capacity(ef * 2);
+        let mut candidates: BinaryHeap<Candidate> = BinaryHeap::with_capacity(capacity);
 
         // RESULTS heap: track top-k results
         // peek() gives us the WORST result in our top-k (for pruning)
@@ -334,12 +335,12 @@ impl HNSW {
         results.push(ScoredResult(entry, entry_sim));
 
         while let Some(Candidate(current_id, current_sim)) = candidates.pop() {
-            // PRUNING: if we've filled ef slots and current is worse than our worst result,
-            // there's no point exploring it - all its neighbors will be even worse
+            // If we've filled ef slots and current is worse than our worst result
             if let Some(worst_result) = results.peek()
                 && results.len() >= ef
                 && current_sim < worst_result.1
             {
+                // There's no point exploring it because all its neighbors will be even worse
                 continue;
             }
 
@@ -379,18 +380,22 @@ impl HNSW {
             }
         }
 
-        // Final sort for highest similarity first for output consistency (results is a min-heap by similarity, so we reverse it)
+        // Final sort for highest similarity first for output consistency
         let mut sorted_results: Vec<ScoredResult> = results.into_vec();
-        sorted_results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        sorted_results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
 
         sorted_results
             .into_iter()
-            .map(|ScoredResult(id, _)| id)
+            .map(|ScoredResult(id, sim)| (id, sim))
             .collect()
     }
 
     /// Remove connections to keep only the M closest neighbors
     fn prune_connections(&mut self, node_id: NodeIndex, layer: usize) {
+        if self.nodes[node_id].neighbors[layer].len() <= self.max_neighbors {
+            return;
+        }
+
         // Store the old neighbor list to identify which edges to remove
         let old_neighbors: HashSet<NodeIndex> = self.nodes[node_id].neighbors[layer]
             .iter()
@@ -399,7 +404,7 @@ impl HNSW {
 
         // Calculate similarities to all neighbors, filtering out tombstoned nodes
         let mut neighbor_sims: Vec<(NodeIndex, f32)> = self.nodes[node_id].neighbors[layer]
-            .par_iter()
+            .iter()
             .filter(|&&n| !self.nodes[n].tombstone) // Skip tombstoned neighbors
             .map(|&n| {
                 let sim = self.similarity(
@@ -411,11 +416,10 @@ impl HNSW {
             })
             .collect();
 
-        neighbor_sims.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        neighbor_sims.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
         neighbor_sims.truncate(self.max_neighbors);
 
-        let new_neighbors: Vec<NodeIndex> =
-            neighbor_sims.into_par_iter().map(|(id, _)| id).collect();
+        let new_neighbors: Vec<NodeIndex> = neighbor_sims.into_iter().map(|(id, _)| id).collect();
         let new_neighbors_set: HashSet<NodeIndex> = new_neighbors.iter().copied().collect();
 
         let removed_neighbors: Vec<NodeIndex> = old_neighbors
@@ -426,7 +430,7 @@ impl HNSW {
         // Update this node's neighbor list
         self.nodes[node_id].neighbors[layer] = new_neighbors;
 
-        // CRITICAL: Remove reverse edges from pruned neighbors to maintain bidirectionality
+        // Remove reverse edges from pruned neighbors to maintain bidirectionality
         for removed_neighbor_id in removed_neighbors {
             if layer <= self.nodes[removed_neighbor_id].max_level {
                 self.nodes[removed_neighbor_id].neighbors[layer].retain(|&n| n != node_id);
@@ -440,52 +444,24 @@ impl HNSW {
         match metrics {
             Some(Metrics::Cosine) | None => cosine_similarity(a, b),
             Some(Metrics::Euclidean) => euclidean_similarity(a, b),
-            Some(Metrics::DotProduct) => dot_product(a, b),
+            Some(Metrics::RawDot) => dot_product(a, b),
         }
     }
 
-    /// Public search API: find K nearest neighbors to a query
-    /// Returns results as (node_id, similarity) tuples sorted by similarity (highest first)
-    ///
-    /// * `query` - The query vector
-    /// * `k` - Number of nearest neighbors to return
-    /// * `ef_search` - Optional bounded width for search. If None, uses k * DEFAULT_EF_MULTIPLIER
-    pub fn search(&self, query: &[f32], k: usize, ef_search: Option<usize>) -> Vec<(String, f32)> {
-        if self.entry_point.is_none() {
+    /// Internal search method that performs the actual HNSW search, other `[search_*]` fn uses this internally
+    /// Returns (index, similarity) of candidates, including `tombstoned` nodes or empty vec otherwise
+    /// `ef` is here `explorable nodes limit`, internally does ef =~ cK, because, we want to have a `'good'` chance of finding K if not more than K `'good'` nodes
+    /// > Time ~ O(log n) + O(ef log ef) + O(k) <- for final truncation, but usually ef dominates
+    #[inline]
+    pub fn search_internal(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeIndex, f32)> {
+        let Some(entry) = self.entry_point else {
+            return Vec::new();
+        };
+
+        if k == 0 || ef == 0 || query.is_empty() {
             return Vec::new();
         }
 
-        let ef = ef_search.unwrap_or(k * DEFAULT_EF_MULTIPLIER);
-        let mut current_ef = ef;
-        // TODO: Need to cap this otherwise...
-        let max_ef = self.nodes.len().max(ef);
-
-        loop {
-            let results = self.search_internal(query, k, current_ef);
-
-            // Filter out tombstoned nodes and convert to node IDs
-            let active_results: Vec<(String, f32)> = results
-                .into_par_iter()
-                .filter(|(id, _)| !self.nodes[*id].tombstone)
-                .map(|(id, sim)| (self.nodes[id].node_id.clone(), sim))
-                .collect();
-
-            // If we have enough results, or we've reached max ef, return
-            if active_results.len() >= k || current_ef >= max_ef {
-                return active_results.into_par_iter().take(k).collect();
-            }
-
-            // Not enough active results, perform DOMAIN EXPANSION 🟣
-            current_ef = (current_ef as f32 * DEFAULT_EF_INC_FACTOR) as usize;
-            current_ef = current_ef.min(max_ef);
-        }
-    }
-
-    /// Internal search method that performs the actual HNSW search
-    /// Returns array index and similarity of candidates, including tombstoned nodes
-    #[inline]
-    pub fn search_internal(&self, query: &[f32], k: usize, ef: usize) -> Vec<(NodeIndex, f32)> {
-        let entry = self.entry_point.expect("Entry point should exist");
         let entry_level = self.nodes[entry].max_level;
         let mut current = entry;
 
@@ -497,52 +473,93 @@ impl HNSW {
         // Search layer 0 thoroughly for K neighbors!!!
         let candidates = self.search_layer_knn(query, current, ef, 0);
 
-        // Return with similarities
-        let mut results: Vec<(NodeIndex, f32)> = candidates
-            .into_par_iter()
-            .map(|id| {
-                (
-                    id,
-                    self.similarity(query, &self.nodes[id].vector, self.metrics.as_ref()),
-                )
-            })
-            .collect();
+        // Returns similarities, no need for recalculation
+        let mut results = candidates;
 
-        results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
         results.truncate(k);
 
         results
     }
 
+    /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
+    /// Returns results as (node_id, similarity) tuples sorted by similarity (highest first)
+    ///
+    /// - `query` - The query vector
+    /// - `k` - Number of nearest neighbors to return
+    /// - `ef_search` - Optional bounded width for search. If None, uses k * DEFAULT_EF_MULTIPLIER
+    pub fn search(&self, query: &[f32], k: usize, ef_search: Option<usize>) -> Vec<(NodeID, f32)> {
+        if k == 0 || self.entry_point.is_none() {
+            return Vec::new();
+        }
+
+        let ef = ef_search.unwrap_or(k * DEFAULT_EF_MULTIPLIER);
+        let mut current_ef = ef.max(k).max(1); // We are caping at K
+        let max_ef = self.nodes.len().max(ef);
+
+        loop {
+            let results = self.search_internal(query, k, current_ef);
+
+            // Filter out tombstoned nodes and convert to node IDs
+            let active_results: Vec<(String, f32)> = results
+                .into_iter()
+                .filter(|(id, _)| !self.nodes[*id].tombstone)
+                .map(|(id, sim)| (self.nodes[id].node_id.clone(), sim))
+                .collect();
+
+            // If we have enough results, or we've reached max ef, return
+            if active_results.len() >= k || current_ef >= max_ef {
+                return active_results.into_iter().take(k).collect();
+            }
+
+            // Not enough active results, perform DOMAIN EXPANSION 🟣
+            let grown = ((current_ef as f32) * DEFAULT_EF_INC_FACTOR).ceil() as usize;
+            current_ef = grown.max(current_ef + 1).min(max_ef);
+        }
+    }
+
     #[inline]
-    /// Search and return results with metadata
+    /// Search and return results with metadata, similiar to [search](HNSW::search), but collects metadata on return
     /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
     pub fn search_with_metadata(
         &self,
         query: &[f32],
         k: usize,
         ef_search: Option<usize>,
-    ) -> Vec<(String, f32, Vec<u8>)> {
-        let results = self.search(query, k, ef_search);
-        results
-            .into_par_iter()
-            .map(|(node_id, sim)| {
-                let metadata = self
-                    .id_mapper
-                    .get(&node_id)
-                    .and_then(|&id| self.nodes.get(id))
-                    .map(|node| node.metadata.clone())
-                    .unwrap_or_default();
-                (node_id, sim, metadata)
-            })
-            .collect()
+    ) -> Vec<(NodeID, f32, Vec<u8>)> {
+        if self.entry_point.is_none() || k == 0 {
+            return Vec::new();
+        }
+
+        let ef = ef_search.unwrap_or(k * DEFAULT_EF_MULTIPLIER).max(k).max(1);
+        let mut current_ef = ef;
+        let max_ef = self.nodes.len().max(ef);
+
+        loop {
+            let results = self.search_internal(query, k, current_ef);
+
+            let active_results: Vec<(String, f32, Vec<u8>)> = results
+                .into_iter()
+                .filter(|(id, _)| !self.nodes[*id].tombstone)
+                .map(|(id, sim)| {
+                    let node = &self.nodes[id];
+                    (node.node_id.clone(), sim, node.metadata.clone())
+                })
+                .collect();
+
+            if active_results.len() >= k || current_ef >= max_ef {
+                return active_results.into_iter().take(k).collect();
+            }
+
+            let grown = ((current_ef as f32) * DEFAULT_EF_INC_FACTOR).ceil() as usize;
+            current_ef = grown.max(current_ef + 1).min(max_ef);
+        }
     }
 
     #[inline]
     /// Brute-force parallel search for testing and validation.
     /// Returns similar to [`search`](HNSW::search)
-    /// > Parallel overhead trade-offs are not always good!!
-    pub fn brute_force_search(&self, query: &[f32], k: usize) -> Vec<(String, f32)> {
+    pub fn brute_search(&self, query: &[f32], k: usize) -> Vec<(String, f32)> {
         let mut results: Vec<(String, f32)> = self
             .nodes
             .par_iter()
@@ -555,22 +572,21 @@ impl HNSW {
             })
             .collect();
 
-        results.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
         results.truncate(k);
 
         results
     }
 
     #[inline]
-    /// Brute-force parallel search with metadata included in results.
+    /// Brute-force search with metadata included in results.
     /// Returns similiar to [`search_with_metadata`](HNSW::search_with_metadata)
-    /// > Parallel overhead are not good especially for small index
-    pub fn brute_force_search_with_metadata(
+    pub fn brute_search_with_metadata(
         &self,
         query: &[f32],
         k: usize,
     ) -> Vec<(String, f32, Vec<u8>)> {
-        let results = self.brute_force_search(query, k);
+        let results = self.brute_search(query, k);
         results
             .into_iter()
             .map(|(node_id, sim)| {
@@ -707,7 +723,9 @@ impl HNSW {
                 continue;
             }
 
-            let new_id = *old_to_new.get(&old_id).unwrap();
+            let Some(&new_id) = old_to_new.get(&old_id) else {
+                continue;
+            };
 
             for layer in 0..=node.max_level {
                 for &old_neighbor_id in &node.neighbors[layer] {
@@ -732,8 +750,9 @@ impl HNSW {
                 // Find new entry point (highest level active node)
                 self.entry_point = None;
                 for (new_id, node) in new_nodes.iter().enumerate() {
-                    if self.entry_point.is_none()
-                        || node.max_level > new_nodes[self.entry_point.unwrap()].max_level
+                    if self
+                        .entry_point
+                        .is_none_or(|entry_id| node.max_level > new_nodes[entry_id].max_level)
                     {
                         self.entry_point = Some(new_id);
                     }

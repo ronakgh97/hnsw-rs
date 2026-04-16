@@ -158,7 +158,7 @@ fn test_hnsw_brute_force_search() {
     let query = vectors.0[5].clone();
 
     let hnsw_results = hnsw.search(&query, 5, None);
-    let brute_force_results = hnsw.brute_force_search(&query, 5);
+    let brute_force_results = hnsw.brute_search(&query, 5);
 
     let hnsw_ids: Vec<_> = hnsw_results.iter().map(|(id, _)| id).collect();
     let bf_ids: Vec<_> = brute_force_results.iter().map(|(id, _)| id).collect();

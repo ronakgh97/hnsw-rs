@@ -1,7 +1,6 @@
-An implementation of HNSW (Hierarchical Navigable Small World) algorithm for approximate nearest neighbor search.
-The implementation is not directly based on the [original paper](https://arxiv.org/pdf/1603.09320), but is inspired
-by it. This implementation is simple and easy to understand, while still being *reasonably* efficient and scalable in
-future
+An implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor search.
+This is not directly based on the [original paper](https://arxiv.org/pdf/1603.09320), but is inspired
+by it. It is simple and easy to understand, while still being *reasonably* efficient and scalable, I guess
 
 Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), which is a vector database built on top of this
 HNSW implementation.
