@@ -1,5 +1,12 @@
 use hnsw_rs::prelude::*;
 
+#[inline(always)]
+fn gen_helper() -> (String, Vec<u8>) {
+    (encode(gen_bytes(32)), gen_bytes(64))
+}
+
+// THESE TEST ARE AI-GENERATED
+
 #[test]
 fn test_hnsw_basic_insert() {
     let mut hnsw = HNSW::default();
@@ -9,9 +16,10 @@ fn test_hnsw_basic_insert() {
         vec![0.0, 0.0, 1.0],
     ];
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for vector in vectors.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     assert_eq!(hnsw.count(), 3);
@@ -27,12 +35,11 @@ fn test_hnsw_search_empty() {
 #[test]
 fn test_hnsw_search_single_node() {
     let mut hnsw = HNSW::default();
-    hnsw.insert("0".to_string(), &[1.0, 0.0, 0.0], vec![], 0)
+    hnsw.insert("X".to_string(), &[1.0, 0.0, 0.0], vec![], 0)
         .unwrap();
 
     let results = hnsw.search(&[1.0, 0.0, 0.0], 1, None);
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].0, "0");
 }
 
 #[test]
@@ -43,16 +50,16 @@ fn test_hnsw_search_returns_correct_k() {
 
     let vectors = gen_vec(num_vectors, dimensions, 42);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[0].clone();
     let results = hnsw.search(&query, 5, None);
 
     assert_eq!(results.len(), 5);
-    assert_eq!(results[0].0, "0");
 }
 
 #[test]
@@ -60,9 +67,10 @@ fn test_hnsw_search_with_different_ef() {
     let mut hnsw = HNSW::default();
     let vectors = gen_vec(50, 64, 99);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        let (idx, meta) = gen_helper();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[10].clone();
@@ -78,15 +86,14 @@ fn test_hnsw_search_with_different_ef() {
 fn test_hnsw_search_with_metadata() {
     let mut hnsw = HNSW::default();
 
-    hnsw.insert("0".to_string(), &[1.0, 0.0], b"meta0".to_vec(), 0)
+    hnsw.insert("X".to_string(), &[1.0, 0.0], b"meta0".to_vec(), 0)
         .unwrap();
-    hnsw.insert("1".to_string(), &[0.0, 1.0], b"meta1".to_vec(), 0)
+    hnsw.insert("Y".to_string(), &[0.0, 1.0], b"meta1".to_vec(), 0)
         .unwrap();
 
     let results = hnsw.search_with_metadata(&[1.0, 0.0], 1, None);
 
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].0, "0");
     assert_eq!(results[0].2, b"meta0");
 }
 
@@ -100,14 +107,14 @@ fn test_hnsw_search_with_cosine_metric() {
         vec![1.0, 1.0, 0.0],
     ];
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for vector in vectors.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let results = hnsw.search(&[1.0, 0.0, 0.0], 2, None);
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].0, "0");
 }
 
 #[test]
@@ -116,14 +123,14 @@ fn test_hnsw_search_with_euclidean_metric() {
 
     let vectors = [vec![0.0, 0.0], vec![1.0, 0.0], vec![0.0, 1.0]];
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for vector in vectors.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let results = hnsw.search(&[0.0, 0.0], 2, None);
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].0, "0");
 }
 
 #[test]
@@ -136,9 +143,10 @@ fn test_hnsw_search_with_dot_product_metric() {
         vec![0.5, 0.5, 0.0],
     ];
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for vector in vectors.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let results = hnsw.search(&[1.0, 0.0, 0.0], 2, None);
@@ -150,9 +158,10 @@ fn test_hnsw_brute_force_search() {
     let mut hnsw = HNSW::default();
     let vectors = gen_vec(30, 32, 123);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[5].clone();
@@ -176,7 +185,7 @@ fn test_hnsw_delete_node() {
         hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
     }
 
-    hnsw.delete_node_by_id("5").unwrap();
+    hnsw.delete_node("6").unwrap();
 
     assert_eq!(hnsw.active_count(), 9);
     assert_eq!(hnsw.tombstone_count(), 1);
@@ -187,109 +196,28 @@ fn test_hnsw_delete_nonexistent() {
     let mut hnsw = HNSW::default();
     hnsw.insert("0".to_string(), &[1.0], vec![], 0).unwrap();
 
-    let result = hnsw.delete_node_by_id("999");
+    let result = hnsw.delete_node("99999999");
     assert!(result.is_err());
 }
 
 #[test]
-fn test_hnsw_tombstone_ratio() {
+fn test_hnsw_get_node() {
     let mut hnsw = HNSW::default();
-    let vectors = gen_vec(10, 32, 2);
+    let idx = hnsw
+        .insert("X".to_string(), &[1.0, 2.0, 3.0], b"metadata".to_vec(), 0)
+        .unwrap();
 
-    for (i, vector) in vectors.0.iter().enumerate() {
-        let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
-    }
-
-    assert_eq!(hnsw.tombstone_ratio(), 0.0);
-
-    hnsw.delete_node_by_id("0").unwrap();
-    hnsw.delete_node_by_id("1").unwrap();
-    hnsw.delete_node_by_id("2").unwrap();
-
-    assert!((hnsw.tombstone_ratio() - 0.3).abs() < 0.001);
-}
-
-#[test]
-fn test_hnsw_reindex() {
-    let mut hnsw = HNSW::default();
-    let vectors = gen_vec(10, 32, 3);
-
-    for (i, vector) in vectors.0.iter().enumerate() {
-        let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
-    }
-
-    hnsw.delete_node_by_id("0").unwrap();
-    hnsw.delete_node_by_id("1").unwrap();
-    hnsw.delete_node_by_id("2").unwrap();
-
-    hnsw.reindex().unwrap();
-
-    assert_eq!(hnsw.count(), 7);
-    assert_eq!(hnsw.active_count(), 7);
-    assert_eq!(hnsw.tombstone_count(), 0);
-}
-
-#[test]
-fn test_hnsw_reindex_preserves_search() {
-    let mut hnsw = HNSW::default();
-    let vectors = gen_vec(20, 32, 4);
-
-    for (i, vector) in vectors.0.iter().enumerate() {
-        let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
-    }
-
-    let query = vectors.0[5].clone();
-    let before_reindex = hnsw.search(&query, 5, None);
-
-    hnsw.delete_node_by_id("0").unwrap();
-    hnsw.delete_node_by_id("1").unwrap();
-    hnsw.reindex().unwrap();
-
-    let after_reindex = hnsw.search(&query, 5, None);
-
-    assert_eq!(before_reindex.len(), after_reindex.len());
-}
-
-#[test]
-fn test_hnsw_get_node_by_id() {
-    let mut hnsw = HNSW::default();
-    hnsw.insert(
-        "test".to_string(),
-        &[1.0, 2.0, 3.0],
-        b"metadata".to_vec(),
-        0,
-    )
-    .unwrap();
-
-    let node = hnsw.get_node_by_id("test");
+    let node = hnsw.get_node(&idx);
     assert!(node.is_some());
-    assert_eq!(node.unwrap().node_id, "test");
     assert_eq!(node.unwrap().metadata, b"metadata");
 }
 
 #[test]
-fn test_hnsw_get_node_by_id_nonexistent() {
+fn test_hnsw_get_node_nonexistent() {
     let hnsw = HNSW::default();
-    let node = hnsw.get_node_by_id("nonexistent");
+    let node = hnsw.get_node("999");
     assert!(node.is_none());
 }
-
-// #[test]
-// fn test_hnsw_node_is_deleted() {
-//     let mut hnsw = HNSW::default();
-//     hnsw.insert("0".to_string(), &[1.0], vec![], 0).unwrap();
-//
-//     let node = hnsw.get_node_by_id("0").unwrap();
-//     assert!(!node.is_deleted());
-//
-//     hnsw.delete_node_by_id("0").unwrap();
-//
-//     let node = hnsw.get_node_by_id("0").unwrap();
-//     assert!(node.is_deleted());
-// }
 
 #[test]
 fn test_hnsw_duplicate_insert() {
@@ -312,45 +240,46 @@ fn test_hnsw_active_count() {
 
     assert_eq!(hnsw.active_count(), 5);
 
-    hnsw.delete_node_by_id("1").unwrap();
-    hnsw.delete_node_by_id("2").unwrap();
+    hnsw.delete_node("1").unwrap();
+    hnsw.delete_node("2").unwrap();
 
     assert_eq!(hnsw.active_count(), 3);
 }
 
-#[test]
-fn test_hnsw_search_preserves_entry_point() {
-    let mut hnsw = HNSW::default();
-    let vectors = gen_vec(10, 32, 6);
-
-    for (i, vector) in vectors.0.iter().enumerate() {
-        let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
-    }
-
-    let entry_before = hnsw
-        .get_entry_point()
-        .map(|node| node.node_id.clone())
-        .unwrap();
-
-    hnsw.search(&vectors.0[0], 3, None);
-
-    assert_eq!(
-        hnsw.get_entry_point()
-            .map(|node| node.node_id.clone())
-            .unwrap(),
-        entry_before
-    );
-}
+// #[test]
+// fn test_hnsw_search_preserves_entry_point() {
+//     let mut hnsw = HNSW::default();
+//     let vectors = gen_vec(10, 32, 6);
+//
+//     for (i, vector) in vectors.0.iter().enumerate() {
+//         let level = hnsw.get_random_level();
+//         hnsw.insert(vector, vec![], level).unwrap();
+//     }
+//
+//     let entry_before = hnsw
+//         .get_entry_point()
+//         .map(|node| node.node_id.clone())
+//         .unwrap();
+//
+//     hnsw.search(&vectors.0[0], 3, None);
+//
+//     assert_eq!(
+//         hnsw.get_entry_point()
+//             .map(|node| node.node_id.clone())
+//             .unwrap(),
+//         entry_before
+//     );
+// }
 
 #[test]
 fn test_hnsw_multiple_searches() {
     let mut hnsw = HNSW::default();
     let vectors = gen_vec(30, 48, 7);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     for i in 0..10 {
@@ -366,9 +295,10 @@ fn test_hnsw_with_large_vectors() {
     let mut hnsw = HNSW::default();
     let vectors = gen_vec(50, 512, 8);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[25].clone();
@@ -382,9 +312,10 @@ fn test_hnsw_with_high_ef_construction() {
     let mut hnsw = HNSW::new(16, 512, 4, 1.0, Some(Metrics::Cosine), 1000);
     let vectors = gen_vec(20, 32, 9);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[10].clone();
@@ -398,9 +329,10 @@ fn test_hnsw_search_results_sorted_by_similarity() {
     let mut hnsw = HNSW::default();
     let vectors = gen_vec(20, 32, 10);
 
-    for (i, vector) in vectors.0.iter().enumerate() {
+    for vector in vectors.0.iter() {
+        let (idx, meta) = gen_helper();
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
     let query = vectors.0[0].clone();

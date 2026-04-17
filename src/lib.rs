@@ -2,28 +2,7 @@
 //!
 //! An implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search.
 //! This implementation is inspired by this [paper](https://arxiv.org/pdf/1603.09320)
-//! but isn't fully based on that, I have done some my own simplifications and is reasonably efficient for most use cases, but not optimized for production use yet, and is still in early stages of development [GitHub](https://github.com/ronakgh97/hnsw-rs)
-//!
-//! ## Quick Start
-//!
-//! ```rust
-//! use hnsw_rs::prelude::*;
-//!
-//! let mut hnsw = HNSW::default();
-//! let vectors = vec![
-//!     vec![1.0, 0.0, 0.0],
-//!     vec![0.0, 1.0, 0.0],
-//!     vec![0.0, 0.0, 1.0],
-//! ];
-//!
-//! for (i, vector) in vectors.iter().enumerate() {
-//!     let level = hnsw.get_random_level(); // <-- (-rand.ln() * mL).floor(), where mL is 1/ln(M)
-//!     hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
-//! }
-//!
-//! let results = hnsw.search(&[1.0, 0.0, 0.0], 2, None);
-//! assert_eq!(results.len(), 2);
-//! ```
+//! but isn't fully based on that, I have done some my own simplifications and is `reasonably` efficient for most use cases, but not optimized for production use yet, and is still in early stages of development [GitHub](https://github.com/ronakgh97/hnsw-rs)
 //!
 //! ## Features
 //!
@@ -58,20 +37,25 @@ pub mod prelude {
     pub use crate::maths::*;
     pub use crate::storage::*;
     pub use crate::utils::*;
+    pub use hex::*;
 }
 
 #[test]
 fn basic_hnsw_test() {
     use crate::prelude::*;
     let mut hnsw = HNSW::default();
-    let (vectors, _seed) = gen_vec(32, 128, 42);
+    let (vectors, seed) = gen_vec(32, 128, 42);
 
-    for (i, vector) in vectors.iter().enumerate() {
+    for vector in vectors.iter() {
+        let id = encode(gen_bytes(16));
+        let meta = gen_bytes(64);
         let level = hnsw.get_random_level();
-        hnsw.insert(i.to_string(), vector, vec![], level).unwrap();
+        hnsw.insert(id, vector, meta, level).unwrap();
     }
+    assert_eq!(seed, 74);
     assert_eq!(hnsw.count(), 32);
 
     hnsw.auto_fill(32).unwrap();
     assert_eq!(hnsw.count(), 64);
+    println!("Mem-size: {}", hnsw.size_in_bytes());
 }

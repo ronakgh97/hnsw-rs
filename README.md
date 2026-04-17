@@ -1,18 +1,20 @@
 An implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor search.
-This is not directly based on the [original paper](https://arxiv.org/pdf/1603.09320) 😅, but is inspired
-by it. It is simplified and easy to understand, while still being *reasonably* efficient and scalable, I guess
+This is not directly based on the [original paper](https://arxiv.org/pdf/1603.09320), it is simplified and easy to
+understand, while still being *reasonably* efficient and robust, I guess
 
 Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), which is a vector database built on top of this
 HNSW implementation.
 
-how to bench?
+How to bench?
 
 ```shell
 cargo run --example bench --release -- ../../datasets/dim1536_size1M 4
                                          <path to dataset> <num of files to read>
 ```
 
-make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M)
+Make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M)
+
+![Bench plot](examples/plot.png)
 
 Ref:
 
