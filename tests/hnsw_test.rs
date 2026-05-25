@@ -22,7 +22,7 @@ fn test_hnsw_basic_insert() {
         hnsw.insert(idx, vector, meta, level).unwrap();
     }
 
-    assert_eq!(hnsw.count(), 3);
+    assert_eq!(hnsw.size(), 3);
 }
 
 #[test]

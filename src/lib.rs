@@ -53,9 +53,9 @@ fn basic_hnsw_test() {
         hnsw.insert(id, vector, meta, level).unwrap();
     }
     assert_eq!(seed, 74);
-    assert_eq!(hnsw.count(), 32);
+    assert_eq!(hnsw.size(), 32);
 
     hnsw.auto_fill(32).unwrap();
-    assert_eq!(hnsw.count(), 64);
-    println!("Mem-size: {}", hnsw.size_in_bytes());
+    assert_eq!(hnsw.size(), 64);
+    println!("Mem-size: {}", hnsw.mem_size());
 }

@@ -23,9 +23,9 @@ impl Metrics {
     #[inline]
     pub fn calculate(&self, a: &[f32], b: &[f32]) -> f32 {
         match self {
-            Metrics::Cosine => cosine_similarity(a, b),
-            Metrics::Euclidean => euclidean_similarity(a, b),
-            Metrics::RawDot => dot_product(a, b),
+            Metrics::Cosine => unsafe { cosine_similarity(a, b) },
+            Metrics::Euclidean => unsafe { euclidean_similarity(a, b) },
+            Metrics::RawDot => unsafe { dot_product(a, b) },
         }
     }
 
@@ -40,23 +40,23 @@ impl Metrics {
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[inline(always)]
 /// SIMD-optimized cosine similarity
-/// Returns value in `[-1, 1]`
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.is_empty() || b.is_empty() {
-        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
-        panic!("Vectors must not be empty");
-    }
-    if a.len() != b.len() {
-        panic!(
-            "Vector dimensions must match, a: {}, b: {}",
-            a.len(),
-            b.len()
-        );
-    }
+/// Safety: No bound/length checks
+pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
+    //     panic!(
+    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
+    //         a.len(),
+    //         b.len()
+    //     );
+    // }
 
-    let chunks = a.len() / 8;
+    const LANE: usize = 32;
+
+    // process 32 elements per iteration (4 * 8-lane vectors)
+    let chunks = a.len() / LANE;
     let mut dot = f32x8::ZERO;
     let mut norm_a = f32x8::ZERO;
     let mut norm_b = f32x8::ZERO;
@@ -64,28 +64,53 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
-    // Process 8 elements at a time with SIMD
     for i in 0..chunks {
-        let offset = i * 8;
+        let offset = i * LANE;
         unsafe {
-            let va_ptr = a_ptr.add(offset);
-            let vb_ptr = b_ptr.add(offset);
+            let va0_ptr = a_ptr.add(offset);
+            let va1_ptr = a_ptr.add(offset + 8);
+            let va2_ptr = a_ptr.add(offset + 16);
+            let va3_ptr = a_ptr.add(offset + 24);
 
-            let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
-            let vb = f32x8::from(read_unaligned(vb_ptr as *const [f32; 8]));
-            dot = va.mul_add(vb, dot);
-            norm_a = va.mul_add(va, norm_a);
-            norm_b = vb.mul_add(vb, norm_b);
+            let vb0_ptr = b_ptr.add(offset);
+            let vb1_ptr = b_ptr.add(offset + 8);
+            let vb2_ptr = b_ptr.add(offset + 16);
+            let vb3_ptr = b_ptr.add(offset + 24);
+
+            let va0 = f32x8::from(read_unaligned(va0_ptr as *const [f32; 8]));
+            let va1 = f32x8::from(read_unaligned(va1_ptr as *const [f32; 8]));
+            let va2 = f32x8::from(read_unaligned(va2_ptr as *const [f32; 8]));
+            let va3 = f32x8::from(read_unaligned(va3_ptr as *const [f32; 8]));
+
+            let vb0 = f32x8::from(read_unaligned(vb0_ptr as *const [f32; 8]));
+            let vb1 = f32x8::from(read_unaligned(vb1_ptr as *const [f32; 8]));
+            let vb2 = f32x8::from(read_unaligned(vb2_ptr as *const [f32; 8]));
+            let vb3 = f32x8::from(read_unaligned(vb3_ptr as *const [f32; 8]));
+
+            dot = va0.mul_add(vb0, dot);
+            dot = va1.mul_add(vb1, dot);
+            dot = va2.mul_add(vb2, dot);
+            dot = va3.mul_add(vb3, dot);
+
+            norm_a = va0.mul_add(va0, norm_a);
+            norm_a = va1.mul_add(va1, norm_a);
+            norm_a = va2.mul_add(va2, norm_a);
+            norm_a = va3.mul_add(va3, norm_a);
+
+            norm_b = vb0.mul_add(vb0, norm_b);
+            norm_b = vb1.mul_add(vb1, norm_b);
+            norm_b = vb2.mul_add(vb2, norm_b);
+            norm_b = vb3.mul_add(vb3, norm_b);
         }
     }
 
-    // Reduce SIMD vectors to scalars
+    // reduce scalars
     let mut dot_sum = from_f32x8(dot);
     let mut na_sum = from_f32x8(norm_a);
     let mut nb_sum = from_f32x8(norm_b);
 
-    // Handle remaining elements (tail)
-    let remainder_start = chunks * 8;
+    // handle remaining elements
+    let remainder_start = chunks * LANE;
     for i in remainder_start..a.len() {
         dot_sum += a[i] * b[i];
         na_sum += a[i] * a[i];
@@ -100,71 +125,19 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-#[inline(always)]
-/// SIMD-optimized Euclidean similarity
-/// Returns value in `(0, 1]`
-pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.is_empty() || b.is_empty() {
-        // Yes, Im doing this *necessary* check, because I like symmetric, so stfu
-        panic!("Vectors must not be empty");
-    }
-    if a.len() != b.len() {
-        panic!(
-            "Vector dimensions must match, a: {}, b: {}",
-            a.len(),
-            b.len()
-        );
-    }
-
-    let chunks = a.len() / 8;
-    let mut sum_sq = f32x8::ZERO;
-
-    let a_ptr = a.as_ptr();
-    let b_ptr = b.as_ptr();
-
-    for i in 0..chunks {
-        let offset = i * 8;
-        unsafe {
-            let va_ptr = a_ptr.add(offset);
-            let vb_ptr = b_ptr.add(offset);
-
-            let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
-            let vb = f32x8::from(read_unaligned(vb_ptr as *const [f32; 8]));
-            use std::ops::Sub;
-            let diff = va.sub(vb);
-
-            sum_sq = diff.mul_add(diff, sum_sq);
-        }
-    }
-
-    // Reduce SIMD vector to scalar
-    let mut dist = from_f32x8(sum_sq);
-
-    // Handle remainder
-    let remainder_start = chunks * 8;
-    for i in remainder_start..a.len() {
-        let diff = a[i] - b[i];
-        dist += diff * diff;
-    }
-
-    1.0 / (1.0 + dist.sqrt())
-}
-
+#[allow(clippy::missing_safety_doc)]
 #[inline(always)]
 /// SIMD-optimized raw Dot product
-/// Returns value in `[-inf, inf]`
-pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    if a.is_empty() || b.is_empty() {
-        // Yes, I'm doing this *unnecessary* check, because I like symmetric, so stfu
-        panic!("Vectors must not be empty");
-    }
-    if a.len() != b.len() {
-        panic!(
-            "Vector dimensions must match, a: {}, b: {}",
-            a.len(),
-            b.len()
-        );
-    }
+/// Safety: No bound/length checks
+pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
+    //     panic!(
+    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
+    //         a.len(),
+    //         b.len()
+    //     );
+    // }
+
     let chunks = a.len() / 8;
     let mut sum = f32x8::ZERO;
 
@@ -184,10 +157,10 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
         }
     }
 
-    // Reduce SIMD vector to scalar
+    // reduce scalar
     let mut total_sum = from_f32x8(sum);
 
-    // Handle remainder
+    // handle remainder
     let remainder_start = chunks * 8;
     for i in remainder_start..a.len() {
         total_sum += a[i] * b[i];
@@ -196,8 +169,54 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     total_sum
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[inline(always)]
-/// Multiply two matrices using 4 simd registers at a time, fallbacks if less, returning the resulting matrix
+/// SIMD-optimized Euclidean similarity
+/// Safety: No bound/length checks
+pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
+    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
+    //     panic!(
+    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
+    //         a.len(),
+    //         b.len()
+    //     );
+    // }
+
+    let chunks = a.len() / 8;
+    let mut sum_sq = f32x8::ZERO;
+
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+
+    for i in 0..chunks {
+        let offset = i * 8;
+        unsafe {
+            let va_ptr = a_ptr.add(offset);
+            let vb_ptr = b_ptr.add(offset);
+
+            let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
+            let vb = f32x8::from(read_unaligned(vb_ptr as *const [f32; 8]));
+            let diff = va - vb;
+
+            sum_sq = diff.mul_add(diff, sum_sq);
+        }
+    }
+
+    // reduce to scalar
+    let mut dist = from_f32x8(sum_sq);
+
+    // handle remainder
+    let remainder_start = chunks * 8;
+    for i in remainder_start..a.len() {
+        let diff = a[i] - b[i];
+        dist += diff * diff;
+    }
+
+    1.0 / (1.0 + dist.sqrt())
+}
+
+#[inline(always)]
+/// Multiply two matrices using 4 simd avx2 registers at a time, fallbacks if less, returning the resulting matrix
 /// The matrices are expected to be in row-major order and the dimensions must match
 pub fn matmul(
     matrix_a: &[f32],
@@ -222,6 +241,8 @@ pub fn matmul(
     result
 }
 
+// TODO: write this using _mm256 for arm & x86_64, ditch `wide` crate
+
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 /// In-place matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
@@ -233,164 +254,155 @@ pub fn matmul_into(
     cols_a: usize,
     rows_b: usize,
     cols_b: usize,
-    b_t: &mut [f32],
+    matrix_b_t: &mut [f32],
     result: &mut [f32],
 ) {
-    if cols_a != rows_b {
-        panic!(
-            "Inner dimensions must match for multiplication, got cols_a: {}, rows_b: {}",
-            cols_a, rows_b
-        );
-    }
+    assert_eq!(
+        cols_a, rows_b,
+        "Inner dimensions must match for multiplication, got cols_a: {}, rows_b: {}",
+        cols_a, rows_b
+    );
 
-    let size_a = rows_a * cols_a;
-    let size_b = rows_b * cols_b;
-    let size_res = rows_a * cols_b;
-    if matrix_a.len() != size_a
-        || matrix_b.len() != size_b
-        || result.len() != size_res
-        || b_t.len() != size_b
-    {
-        panic!(
-            "Size mismatch: matrix_a {}, matrix_b {}, result {}, b_t {}, expected a {}, b {}, result {}, b_t {}",
-            matrix_a.len(),
-            matrix_b.len(),
-            result.len(),
-            b_t.len(),
-            size_a,
-            size_b,
-            size_res,
-            size_b,
-        );
-    }
+    assert_eq!(matrix_a.len(), rows_a * cols_a);
+    assert_eq!(matrix_b.len(), rows_b * cols_b);
+    assert_eq!(matrix_b_t.len(), rows_b * cols_b);
+    assert_eq!(result.len(), rows_a * cols_b);
 
-    if result.len() != size_res {
-        panic!(
-            "Result buffer size mismatch: expected {}, got {}",
-            size_res,
-            result.len()
-        );
-    }
-
-    transpose_mat_into(rows_b, cols_b, matrix_b, b_t);
+    unsafe { transpose_mat_into(rows_b, cols_b, matrix_b, matrix_b_t) };
     result.fill(0.0f32);
 
-    // Number of rows of A to process in one block
-    let block_a = 256;
-    // Number of columns of B to process in one block
-    let block_b = 128;
-    // Number of elements in the inner dimension to process in one block,
-    // This should be tuned and large enough to amortize the overhead but small enough to fit in cache
-    let block_c = 64;
+    const BLOCK_A: usize = 256;
+    const BLOCK_B: usize = 128;
+    const BLOCK_C: usize = 128;
 
-    let b_ptr = b_t.as_ptr();
+    const LANE_SIZE: usize = 8;
+    let b_ptr = matrix_b_t.as_ptr();
 
-    for i in (0..rows_a).step_by(block_a) {
-        for j in (0..cols_b).step_by(block_b) {
-            for k in (0..cols_a).step_by(block_c) {
-                // Clamp to matrix dimensions
-                let i_max = (i + block_a).min(rows_a);
-                let j_max = (j + block_b).min(cols_b);
-                let k_max = (k + block_c).min(cols_a);
+    for i in (0..rows_a).step_by(BLOCK_A) {
+        let i_max = (i + BLOCK_A).min(rows_a);
 
-                //TODO: Try to fetch the next block of A and B into L1 cache, this is a bit tricky because we have to calculate the correct offsets
+        for j in (0..cols_b).step_by(BLOCK_B) {
+            let j_max = (j + BLOCK_B).min(cols_b);
 
-                // Process the block of A rows against the block of B columns
+            for k in (0..cols_a).step_by(BLOCK_C) {
+                let k_max = (k + BLOCK_C).min(cols_a);
+
+                // process the block of A rows against the block of B columns
                 for row in i..i_max {
-                    // Get the current row of A, we will use it across the block of B columns
-                    let a_row = &matrix_a[row * cols_a..(row + 1) * cols_a];
+                    let row_base = row * cols_b;
+                    // get the current row of A use it across the block of B columns
+                    let a_row = unsafe { matrix_a.get_unchecked(row * cols_a..(row + 1) * cols_a) };
                     let a_ptr = a_row.as_ptr();
-
-                    // Check how many full 4-column blocks we can process it
-                    // (j_max - j) is the number of columns in this block,
-                    // we want to round it down to the nearest multiple of 4
                     let col_limit = j_max - ((j_max - j) % 4);
 
-                    // Step forward by 4 columns at a time
+                    // step forward by 4 columns at a time (4x8=32 elements)
                     for col in (j..col_limit).step_by(4) {
-                        let offset = 8;
-                        let mut sum0 = f32x8::ZERO;
-                        let mut sum1 = f32x8::ZERO;
-                        let mut sum2 = f32x8::ZERO;
-                        let mut sum3 = f32x8::ZERO;
-
+                        let base = row_base + col;
                         let b0_strt = col * cols_a;
                         let b1_strt = (col + 1) * cols_a;
                         let b2_strt = (col + 2) * cols_a;
                         let b3_strt = (col + 3) * cols_a;
 
+                        let mut sum0 = 0.0f32;
+                        let mut sum1 = 0.0f32;
+                        let mut sum2 = 0.0f32;
+                        let mut sum3 = 0.0f32;
+
+                        let mut vsum0 = f32x8::ZERO;
+                        let mut vsum1 = f32x8::ZERO;
+                        let mut vsum2 = f32x8::ZERO;
+                        let mut vsum3 = f32x8::ZERO;
+
                         let mut t = k;
-                        while t + offset <= k_max {
+                        while t + LANE_SIZE <= k_max {
                             unsafe {
-                                // Pull 8 elements from the current row of A
-                                let va_ptr = a_ptr.add(t);
-                                let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
+                                // pull 8 elements from the current row of A
+                                let va =
+                                    f32x8::from(read_unaligned(a_ptr.add(t) as *const [f32; 8]));
 
-                                let b0_ptr = b_ptr.add(b0_strt + t);
-                                let b1_ptr = b_ptr.add(b1_strt + t);
-                                let b2_ptr = b_ptr.add(b2_strt + t);
-                                let b3_ptr = b_ptr.add(b3_strt + t);
+                                // pull 32 elements from the columns of B (which are rows in b_t)
+                                let b0 = f32x8::from(read_unaligned(
+                                    b_ptr.add(b0_strt + t) as *const [f32; 8]
+                                ));
+                                let b1 = f32x8::from(read_unaligned(
+                                    b_ptr.add(b1_strt + t) as *const [f32; 8]
+                                ));
+                                let b2 = f32x8::from(read_unaligned(
+                                    b_ptr.add(b2_strt + t) as *const [f32; 8]
+                                ));
+                                let b3 = f32x8::from(read_unaligned(
+                                    b_ptr.add(b3_strt + t) as *const [f32; 8]
+                                ));
 
-                                // Pull 8 elements from the columns of B (which are rows in b_t)
-                                let b0 = f32x8::from(read_unaligned(b0_ptr as *const [f32; 8]));
-                                let b1 = f32x8::from(read_unaligned(b1_ptr as *const [f32; 8]));
-                                let b2 = f32x8::from(read_unaligned(b2_ptr as *const [f32; 8]));
-                                let b3 = f32x8::from(read_unaligned(b3_ptr as *const [f32; 8]));
-
-                                sum0 = va.mul_add(b0, sum0);
-                                sum1 = va.mul_add(b1, sum1);
-                                sum2 = va.mul_add(b2, sum2);
-                                sum3 = va.mul_add(b3, sum3);
+                                vsum0 = va.mul_add(b0, vsum0);
+                                vsum1 = va.mul_add(b1, vsum1);
+                                vsum2 = va.mul_add(b2, vsum2);
+                                vsum3 = va.mul_add(b3, vsum3);
                             }
-                            t += offset;
+                            t += LANE_SIZE;
                         }
 
-                        let base = row * cols_b + col;
-                        result[base] += from_f32x8(sum0);
-                        result[base + 1] += from_f32x8(sum1);
-                        result[base + 2] += from_f32x8(sum2);
-                        result[base + 3] += from_f32x8(sum3);
+                        // horizontal reduce once
+                        sum0 += from_f32x8(vsum0);
+                        sum1 += from_f32x8(vsum1);
+                        sum2 += from_f32x8(vsum2);
+                        sum3 += from_f32x8(vsum3);
 
-                        // Handle leftovers
-                        for t in t..k_max {
-                            //TODO: Double result access, bad if result does not fit in cache
-                            let a_val = a_row[t];
-                            result[base] += a_val * b_t[b0_strt + t];
-                            result[base + 1] += a_val * b_t[b1_strt + t];
-                            result[base + 2] += a_val * b_t[b2_strt + t];
-                            result[base + 3] += a_val * b_t[b3_strt + t];
+                        // handle leftovers
+                        while t < k_max {
+                            unsafe {
+                                let a_val = *a_ptr.add(t);
+
+                                sum0 += a_val * *b_ptr.add(b0_strt + t);
+                                sum1 += a_val * *b_ptr.add(b1_strt + t);
+                                sum2 += a_val * *b_ptr.add(b2_strt + t);
+                                sum3 += a_val * *b_ptr.add(b3_strt + t);
+                            }
+
+                            t += 1;
                         }
+
+                        // single writeback
+                        result[base] += sum0;
+                        result[base + 1] += sum1;
+                        result[base + 2] += sum2;
+                        result[base + 3] += sum3;
                     }
 
-                    // Handle remaining columns that don't fit into a 4-column block
+                    // handle remaining columns that don't fit into a 4-column block (32 elements)
                     for col in col_limit..j_max {
-                        let wide = 8;
-                        let mut sum = f32x8::ZERO;
+                        let base = row_base + col;
                         let b_base = col * cols_a;
+
+                        let mut sum = 0.0f32;
+                        let mut vsum = f32x8::ZERO;
 
                         let mut t = k;
 
-                        while t + wide <= k_max {
+                        while t + LANE_SIZE <= k_max {
                             unsafe {
-                                let va_ptr = a_ptr.add(t);
-                                let vb_ptr = b_ptr.add(b_base + t);
+                                let va =
+                                    f32x8::from(read_unaligned(a_ptr.add(t) as *const [f32; 8]));
+                                let vb = f32x8::from(read_unaligned(
+                                    b_ptr.add(b_base + t) as *const [f32; 8]
+                                ));
 
-                                let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
-                                let vb = f32x8::from(read_unaligned(vb_ptr as *const [f32; 8]));
-
-                                sum = va.mul_add(vb, sum);
+                                vsum = va.mul_add(vb, vsum);
                             }
-                            t += wide;
+                            t += LANE_SIZE;
                         }
 
-                        let mut sum_f32 = from_f32x8(sum);
+                        sum += from_f32x8(vsum);
 
-                        // Handle tail for this column
-                        for t in t..k_max {
-                            sum_f32 += a_row[t] * b_t[b_base + t];
+                        while t < k_max {
+                            unsafe {
+                                sum += *a_ptr.add(t) * *b_ptr.add(b_base + t);
+                            }
+
+                            t += 1;
                         }
 
-                        result[row * cols_b + col] += sum_f32;
+                        result[base] += sum;
                     }
                 }
             }
@@ -398,27 +410,36 @@ pub fn matmul_into(
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[inline(always)]
-/// In-place transpose of a matrix, the input and output slices must be the same size and the matrix is expected to be in row-major order.
+/// In-place transpose of a matrix, the input and output slices must be the same size and the input matrix is expected to be in row-major order.
 /// The output will also be in row-major order but with rows and columns swapped.
-fn transpose_mat_into(rows: usize, cols: usize, matrix: &[f32], output: &mut [f32]) {
-    let len = rows * cols;
-    if len != matrix.len() || len != output.len() {
-        panic!(
-            "Size mismatch: rows={} cols={} input={} output={}",
-            rows,
-            cols,
-            matrix.len(),
-            output.len()
-        );
-    }
-    for col in 0..cols {
-        let start = col * rows;
-        let in_ptr = matrix.as_ptr();
-        let out_ptr = output.as_mut_ptr();
-        for row in 0..rows {
-            unsafe {
-                *out_ptr.add(start + row) = *in_ptr.add(row * cols + col);
+pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output: &mut [f32]) {
+    // let len = rows * cols;
+    // if len != matrix.len() || len != output.len() {
+    //     panic!(
+    //         "Size mismatch: rows={} cols={} input={} output={}",
+    //         rows,
+    //         cols,
+    //         matrix.len(),
+    //         output.len()
+    //     );
+    // }
+
+    const TILE: usize = 32;
+
+    for ii in (0..rows).step_by(TILE) {
+        for jj in (0..cols).step_by(TILE) {
+            let i_max = (ii + TILE).min(rows);
+            let j_max = (jj + TILE).min(cols);
+
+            for i in ii..i_max {
+                for j in jj..j_max {
+                    unsafe {
+                        *output.get_unchecked_mut(j * rows + i) =
+                            *input.get_unchecked(i * cols + j);
+                    }
+                }
             }
         }
     }
@@ -427,15 +448,18 @@ fn transpose_mat_into(rows: usize, cols: usize, matrix: &[f32], output: &mut [f3
 #[test]
 fn test_maths() {
     use crate::utils::gen_vec;
+    use std::hint::black_box;
     use std::time::Instant;
-    let run = 2148;
-    let dim = 1536;
+    let run = 4096;
+    let dim = 2512;
 
-    let (vec, _seed) = gen_vec(2, dim, 42);
+    let (vec, _seed) = gen_vec(6, dim, 42);
 
     let strt = Instant::now();
     for _ in 0..run {
-        dot_product(&vec[0], &vec[1]);
+        unsafe {
+            black_box(dot_product(&vec[0], &vec[1]));
+        }
     }
     let elapsed = strt.elapsed();
 
@@ -444,7 +468,9 @@ fn test_maths() {
 
     let strt = Instant::now();
     for _ in 0..run {
-        cosine_similarity(&vec[0], &vec[1]);
+        unsafe {
+            black_box(cosine_similarity(&vec[2], &vec[3]));
+        }
     }
     let elapsed = strt.elapsed();
 
@@ -453,7 +479,9 @@ fn test_maths() {
 
     let strt = Instant::now();
     for _ in 0..run {
-        euclidean_similarity(&vec[0], &vec[1]);
+        unsafe {
+            black_box(euclidean_similarity(&vec[4], &vec[5]));
+        }
     }
     let elapsed = strt.elapsed();
 

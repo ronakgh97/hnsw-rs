@@ -63,7 +63,7 @@ impl PartialOrd for ScoredResult {
 }
 
 pub const DEFAULT_EF_MULTIPLIER: usize = 6;
-pub const DEFAULT_EF_INC_FACTOR: f32 = 1.57575;
+pub const DEFAULT_EF_INC_FACTOR: f32 = 1.57275;
 
 /// Hierarchical Navigable Small World (HNSW) [Quick ref](https://arxiv.org/pdf/1603.09320)
 ///
@@ -100,7 +100,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.57575;
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
-///    assert!(hnsw.count() == vectors.len());
+///    assert!(hnsw.size() == vectors.len());
 ///    assert!(hnsw.search(&[1.41, 1.41, 0.0], 3, None).len() == 3);
 ///
 ///    let res = hnsw.search(&[1.0, 0.0, 0.0], 2, None);
@@ -478,10 +478,12 @@ impl HNSW {
     /// Similarity [`metric`](Metrics): cosine similarity, Euclidean similarity, or raw dot product etc
     #[inline]
     fn similarity(&self, a: &[f32], b: &[f32], metrics: Option<&Metrics>) -> f32 {
-        match metrics {
-            Some(Metrics::Cosine) | None => cosine_similarity(a, b),
-            Some(Metrics::Euclidean) => euclidean_similarity(a, b),
-            Some(Metrics::RawDot) => dot_product(a, b),
+        unsafe {
+            match metrics {
+                Some(Metrics::Cosine) | None => cosine_similarity(a, b),
+                Some(Metrics::Euclidean) => euclidean_similarity(a, b),
+                Some(Metrics::RawDot) => dot_product(a, b),
+            }
         }
     }
 
@@ -670,20 +672,6 @@ impl HNSW {
             .filter(move |node| allow_tombstone || !node.tombstone)
     }
 
-    /// Get entry point node, returns None if no entry point or if entry point is tombstoned
-    #[inline]
-    pub fn get_entry_point(&self) -> Option<&Node> {
-        self.entry_point
-            .and_then(|id| self.nodes.get(id))
-            .and_then(|node| if node.tombstone { None } else { Some(node) })
-    }
-
-    /// Get the similarity metric used by this HNSW instance, defaults is [Cosine](Metrics::Cosine)
-    #[inline]
-    pub fn get_metrics_used(&self) -> Metrics {
-        self.metrics.clone().unwrap_or(Metrics::Cosine)
-    }
-
     /// Get all nodes at a specific layer, including tombstoned ones, returns empty vec if level out of bounds
     #[inline]
     pub fn get_node_at_level(&self, level: usize) -> Vec<&Node> {
@@ -698,6 +686,20 @@ impl HNSW {
             .collect()
     }
 
+    /// Get entry point node, returns None if no entry point or if entry point is tombstoned
+    #[inline]
+    pub fn get_entry_point(&self) -> Option<&Node> {
+        self.entry_point
+            .and_then(|id| self.nodes.get(id))
+            .and_then(|node| if node.tombstone { None } else { Some(node) })
+    }
+
+    /// Get the similarity metric used by this HNSW instance, defaults is [Cosine](Metrics::Cosine)
+    #[inline]
+    pub fn get_metrics(&self) -> Metrics {
+        self.metrics.clone().unwrap_or(Metrics::Cosine)
+    }
+
     /// Get the index configuration parameters: (max_layers, max_neighbors, ef_construction)
     #[inline]
     pub fn index_config(&self) -> (usize, usize, usize) {
@@ -706,7 +708,7 @@ impl HNSW {
 
     /// Lazy-delete a node by node ID, if the deleted node is the entry point, finds a new entry point
     /// Returns err if node ID not found
-    #[inline]
+    #[inline(always)]
     pub fn delete_node(&mut self, uuid: &str) -> Result<()> {
         let node_idx = if let Some(idx) = self.id_mapper.get_mut(uuid) {
             if let Some(node) = self.nodes.get_mut(*idx) {
@@ -739,13 +741,13 @@ impl HNSW {
 
     /// Returns the total count of nodes in the graph, including tombstoned ones
     #[inline]
-    pub fn count(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.nodes.len()
     }
 
     /// Returns the total memory usage of the graph in bytes, including everything
     #[inline]
-    pub fn size_in_bytes(&self) -> usize {
+    pub fn mem_size(&self) -> usize {
         use rayon::iter::*;
         let node_size = size_of::<Node>();
         let neighbors_size: usize = self
@@ -802,7 +804,7 @@ pub struct Node {
     /// Vector representation of the node, any dimensionality
     pub vector: Vec<f32>,
     /// Metadata associated with the node
-    pub metadata: Vec<u8>, // TODO: Make it generic? or something else, but serializable can be overhead
+    pub metadata: Vec<u8>, // TODO: Make it generic? or something else
     /// Neighbors per layer, e.g `neighbors[0]` is the list of neighbors in layer 0
     pub neighbors: Vec<Vec<NodeIndex>>,
     /// The highest layer this node exists in

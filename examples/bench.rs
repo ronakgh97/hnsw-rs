@@ -286,11 +286,11 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &Mmap) -> HNSW {
 
     let time = Instant::now();
     for i in 0..num_vectors {
+        pg_bar.inc(1);
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
         let id = format!("uuid_{}", i);
         hnsw.insert(id, vec, vec![], level).ok();
-        pg_bar.inc(1);
     }
 
     Storage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
@@ -335,7 +335,7 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
         };
 
         let mut chart = ChartBuilder::on(&area)
-            .caption(label, ("sans-serif", 20).into_font().color(&color))
+            .caption(label, ("Fira Code", 20).into_font().color(&color))
             .x_label_area_size(40)
             .y_label_area_size(60)
             .margin(20)
@@ -343,8 +343,8 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
 
         chart
             .configure_mesh()
-            .label_style(("sans-serif", 14).into_font().color(&WHITE))
-            .axis_desc_style(("sans-serif", 16).into_font().color(&WHITE))
+            .label_style(("Fira Code", 14).into_font().color(&WHITE))
+            .axis_desc_style(("Fira Code", 16).into_font().color(&WHITE))
             .x_desc(_x_label)
             .y_desc(_y_label)
             .bold_line_style(WHITE.mix(0.3))
@@ -352,7 +352,7 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
             .draw()?;
 
         if let Some(result) = benchmark_results.get(idx) {
-            chart.draw_series(LineSeries::new(result.x_y.clone().into_iter(), color))?;
+            chart.draw_series(LineSeries::new(result.x_y.clone(), color))?;
 
             chart.draw_series(
                 result
