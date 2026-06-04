@@ -10,9 +10,8 @@ use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 // TODO: Something wrong, this is too slow, need to figure out later
-
-const DATASET_CACHE: &str = "./examples/bench_data.bin";
-const INDEX_CACHE: &str = "./examples/bench_index.bin";
+const DATASET_CACHE: &str = "./bench/bench_data.bin";
+const INDEX_CACHE: &str = "./bench/bench_index.bin";
 
 enum BenchMetrics {
     QRSVaryingEF,
@@ -25,11 +24,14 @@ struct BenchmarkResult {
 }
 
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .expect("Usage: bench <input_parquet_dir> [num_files]");
-    let num: usize = std::env::args()
-        .nth(2)
+    let args: Vec<String> = std::env::args().collect();
+
+    let path = args
+        .get(1)
+        .expect("Usage: bench <input_parquet_dir> [num_files]")
+        .to_owned();
+    let num: usize = args
+        .get(2)
         .expect("Usage: bench <input_parquet_dir> [num_files]")
         .parse()?;
 
@@ -59,7 +61,7 @@ fn main() -> Result<()> {
     // Bench starts from here
     {
         let (num, _, mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
-        let hnsw = Storage::read_from_disk(&PathBuf::from(INDEX_CACHE))?;
+        let hnsw = IndexStorage::read_from_disk(&PathBuf::from(INDEX_CACHE))?;
 
         let mut rng = rand::rng();
         let query_count = 4096;
@@ -134,7 +136,7 @@ fn main() -> Result<()> {
         }
     }
 
-    plot_bench(bench_results, PathBuf::from("plot.png"))?;
+    plot_bench(bench_results, PathBuf::from("./bench/plot.png"))?;
 
     Ok(())
 }
@@ -293,7 +295,7 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &Mmap) -> HNSW {
         hnsw.insert(id, vec, vec![], level).ok();
     }
 
-    Storage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
+    IndexStorage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
         .expect("Failed to cache index to disk");
     println!("Index built in {:?} and cached to disk.", time.elapsed());
 
@@ -335,7 +337,7 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
         };
 
         let mut chart = ChartBuilder::on(&area)
-            .caption(label, ("Fira Code", 20).into_font().color(&color))
+            .caption(label, ("0xProto Nerd Font", 20).into_font().color(&color))
             .x_label_area_size(40)
             .y_label_area_size(60)
             .margin(20)
@@ -343,8 +345,8 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
 
         chart
             .configure_mesh()
-            .label_style(("Fira Code", 14).into_font().color(&WHITE))
-            .axis_desc_style(("Fira Code", 16).into_font().color(&WHITE))
+            .label_style(("0xProto Nerd Font", 14).into_font().color(&WHITE))
+            .axis_desc_style(("0xProto Nerd Font", 16).into_font().color(&WHITE))
             .x_desc(_x_label)
             .y_desc(_y_label)
             .bold_line_style(WHITE.mix(0.3))

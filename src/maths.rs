@@ -2,8 +2,7 @@ use std::ptr::read_unaligned;
 use wide::f32x8;
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Helper function to reduce a SIMD vector to a scalar by summing its elements,
-/// without any fancy horizontal add instructions, just a simple sum of the array representation of the SIMD vector.
+/// Helper function to reduce a SIMD vector to a scalar by summing its elements
 #[inline(always)]
 fn from_f32x8(v: f32x8) -> f32 {
     let a = v.to_array();
@@ -138,22 +137,41 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     //     );
     // }
 
-    let chunks = a.len() / 8;
+    const LANE: usize = 32;
+
+    let chunks = a.len() / LANE;
     let mut sum = f32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
+        let offset = i * LANE;
         unsafe {
-            let offset = i * 8;
+            let va0_ptr = a_ptr.add(offset);
+            let va1_ptr = a_ptr.add(offset + 8);
+            let va2_ptr = a_ptr.add(offset + 16);
+            let va3_ptr = a_ptr.add(offset + 24);
 
-            let va_ptr = a_ptr.add(offset);
-            let ba_ptr = b_ptr.add(offset);
+            let vb0_ptr = b_ptr.add(offset);
+            let vb1_ptr = b_ptr.add(offset + 8);
+            let vb2_ptr = b_ptr.add(offset + 16);
+            let vb3_ptr = b_ptr.add(offset + 24);
 
-            let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
-            let vb = f32x8::from(read_unaligned(ba_ptr as *const [f32; 8]));
-            sum = va.mul_add(vb, sum);
+            let va0 = f32x8::from(read_unaligned(va0_ptr as *const [f32; 8]));
+            let va1 = f32x8::from(read_unaligned(va1_ptr as *const [f32; 8]));
+            let va2 = f32x8::from(read_unaligned(va2_ptr as *const [f32; 8]));
+            let va3 = f32x8::from(read_unaligned(va3_ptr as *const [f32; 8]));
+
+            let vb0 = f32x8::from(read_unaligned(vb0_ptr as *const [f32; 8]));
+            let vb1 = f32x8::from(read_unaligned(vb1_ptr as *const [f32; 8]));
+            let vb2 = f32x8::from(read_unaligned(vb2_ptr as *const [f32; 8]));
+            let vb3 = f32x8::from(read_unaligned(vb3_ptr as *const [f32; 8]));
+
+            sum = va0.mul_add(vb0, sum);
+            sum = va1.mul_add(vb1, sum);
+            sum = va2.mul_add(vb2, sum);
+            sum = va3.mul_add(vb3, sum);
         }
     }
 
@@ -182,23 +200,45 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     //     );
     // }
 
-    let chunks = a.len() / 8;
+    const LANE: usize = 32;
+    let chunks = a.len() / LANE;
     let mut sum_sq = f32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * 8;
+        let offset = i * LANE;
         unsafe {
-            let va_ptr = a_ptr.add(offset);
-            let vb_ptr = b_ptr.add(offset);
+            let va0_ptr = a_ptr.add(offset);
+            let va1_ptr = a_ptr.add(offset + 8);
+            let va2_ptr = a_ptr.add(offset + 16);
+            let va3_ptr = a_ptr.add(offset + 24);
 
-            let va = f32x8::from(read_unaligned(va_ptr as *const [f32; 8]));
-            let vb = f32x8::from(read_unaligned(vb_ptr as *const [f32; 8]));
-            let diff = va - vb;
+            let vb0_ptr = b_ptr.add(offset);
+            let vb1_ptr = b_ptr.add(offset + 8);
+            let vb2_ptr = b_ptr.add(offset + 16);
+            let vb3_ptr = b_ptr.add(offset + 24);
 
-            sum_sq = diff.mul_add(diff, sum_sq);
+            let va0 = f32x8::from(read_unaligned(va0_ptr as *const [f32; 8]));
+            let va1 = f32x8::from(read_unaligned(va1_ptr as *const [f32; 8]));
+            let va2 = f32x8::from(read_unaligned(va2_ptr as *const [f32; 8]));
+            let va3 = f32x8::from(read_unaligned(va3_ptr as *const [f32; 8]));
+
+            let vb0 = f32x8::from(read_unaligned(vb0_ptr as *const [f32; 8]));
+            let vb1 = f32x8::from(read_unaligned(vb1_ptr as *const [f32; 8]));
+            let vb2 = f32x8::from(read_unaligned(vb2_ptr as *const [f32; 8]));
+            let vb3 = f32x8::from(read_unaligned(vb3_ptr as *const [f32; 8]));
+
+            let d0 = va0 - vb0;
+            let d1 = va1 - vb1;
+            let d2 = va2 - vb2;
+            let d3 = va3 - vb3;
+
+            sum_sq = d0.mul_add(d0, sum_sq);
+            sum_sq = d1.mul_add(d1, sum_sq);
+            sum_sq = d2.mul_add(d2, sum_sq);
+            sum_sq = d3.mul_add(d3, sum_sq);
         }
     }
 
@@ -426,7 +466,7 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
     //     );
     // }
 
-    const TILE: usize = 32;
+    const TILE: usize = 64;
 
     for ii in (0..rows).step_by(TILE) {
         for jj in (0..cols).step_by(TILE) {

@@ -10,7 +10,7 @@ HNSW implementation.
 Make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M)
 
 ```shell
-cargo run --example bench --release -- ../../datasets/dim1536_size1M 4
+cargo run --bench bench  -- ../../datasets/dim1536_size1M 4
                                          <path to dataset> <num of files to read>
 ```
 
@@ -34,7 +34,7 @@ Recall@192: 0.9893, Time: 31.489504
 Recall@384: 0.9902, Time: 34.98938
 ```
 
-![Bench plot](examples/plot.png)
+![Bench plot](bench/plot.png)
 
 Ref:
 

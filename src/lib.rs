@@ -8,7 +8,7 @@
 //!
 //! - **Wincode Support**: Makes serialization/deserialization efficient and compact for disk-storage
 //! - **Multiple Metrics**: Support for Cosine, Euclidean, and DotProduct similarity
-//! - **SIMD Optimized**: Uses SIMD instructions for fast vector computations
+//! - **SIMD Optimized**: Uses Portable SIMD instructions for fast vector computations
 //! - **Parallel Processing**: Uses Rayon for parallel operations where possible
 //!
 //! ## Modules

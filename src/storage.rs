@@ -9,9 +9,9 @@ pub const PREALLOCATION_SIZE: usize = 512 * 1024 * 1024;
 
 /// Unit struct for handling disk operations related to HNSW index
 #[derive(SchemaRead, SchemaWrite)]
-pub struct Storage;
+pub struct IndexStorage;
 
-impl Storage {
+impl IndexStorage {
     /// Reads an HNSW index from disk using memory mapping for efficient access.
     pub fn read_from_disk(path: &path::Path) -> anyhow::Result<HNSW> {
         let path = path.to_path_buf();
@@ -42,14 +42,10 @@ impl Storage {
             )
         })?;
 
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(&bytes);
-        let checksum = hex::encode(hasher.finalize());
-
-        std::fs::write(&path, bytes).with_context(|| {
+        std::fs::write(&path, &bytes).with_context(|| {
             format!("Failed to write vector data to disk at {}", path.display())
         })?;
 
-        Ok(checksum)
+        Ok(hex::encode(sha2::Sha256::digest(&bytes)))
     }
 }
