@@ -1,40 +1,43 @@
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
-use rayon::prelude::*;
+use rand_xoshiro::Xoshiro256StarStar;
 
-/// Generates a random vector of given dimension with values in range `[-1.0, 1.0]`,
-/// Still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality), but useful testing
-/// Returns a tuple of (generated vectors, final seed).
+/// Generates a random vector of given dimension with values in range `(-1.0, 1.0)`,
+/// still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality),
+/// returns a tuple of (generated vectors, final seed).
 #[inline]
-pub fn gen_vec(num: usize, dim: usize, base_seed: u64) -> (Vec<Vec<f32>>, u64) {
-    let mut result = vec![vec![0.0f32; dim]; num];
+pub fn gen_vec(num: usize, dim: usize, base_seed: usize) -> (Vec<Vec<f32>>, usize) {
+    let mut result = Vec::with_capacity(num);
 
-    result.par_iter_mut().enumerate().for_each(|(i, v)| {
-        let mut rng = SmallRng::seed_from_u64(base_seed.wrapping_add(i as u64));
-        for x in v {
-            *x = rng.random_range(-1.0..1.0);
-        }
-    });
+    for i in 0..num {
+        let seed = (base_seed + i) as u64;
+        let mut rng = SmallRng::seed_from_u64(seed);
+        let row: Vec<f32> = (0..dim)
+            .map(|_| rng.random_range(-1.0f32..1.0f32))
+            .collect();
+        result.push(row);
+    }
 
-    let final_seed = base_seed.wrapping_add(num as u64);
-
+    let final_seed = base_seed + num;
     (result, final_seed)
 }
 
-/// Generates a random byte vector of given size, useful for testing with binary data or metadata.
-/// Each call produces different random bytes. (no seed)
+/// Generates a random byte vector of given size
 #[inline]
-pub fn gen_bytes(size: u32) -> Vec<u8> {
-    let mut rng = rand::rng();
-    (0..size).map(|_| rng.random::<u8>()).collect()
+pub fn gen_bytes(size: usize) -> Vec<u8> {
+    let mut rng = Xoshiro256StarStar::from_rng(&mut rand::rng());
+    let mut tmp = vec![0u8; size];
+    rng.fill(&mut tmp);
+    tmp
 }
 
-/// Fills an existing buffer with random values in range `[-1.0, 1.0]`
+/// Fills f64 buffer with random values in range `(-1.0, 1.0)`
 #[inline]
-pub fn gen_fill(buf: &mut [f64]) {
-    buf.par_iter_mut().for_each(|x| {
-        *x = fastrand::f64() * 2.0 - 1.0;
-    });
+pub fn fill_f64(buf: &mut [f64]) {
+    let mut rng = Xoshiro256StarStar::from_rng(&mut rand::rng());
+    for x in buf {
+        *x = rng.random_range(-1.0..1.0);
+    }
 }
 
 #[inline(always)]
@@ -53,7 +56,7 @@ pub fn from_bytes<T: Copy>(data: &[u8]) -> T {
 fn test_seed_generation() {
     let num_vectors = 2048;
     let dimensions = 128;
-    let base_seed = 42;
+    let base_seed = 97;
 
     let (gen_1, _seed) = gen_vec(num_vectors, dimensions, base_seed);
     let (gen_2, _seed) = gen_vec(num_vectors, dimensions, base_seed);

@@ -1,18 +1,72 @@
-use crate::maths::{Metrics, cosine_similarity, dot_product, euclidean_similarity};
+use crate::maths::{Metrics, dot_product, euclidean_similarity, normalize_l2};
 use crate::prelude::gen_vec;
 use crate::utils::gen_bytes;
-use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use ahash::{HashMap, HashMapExt, HashSet};
 use anyhow::Result;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use wincode::{SchemaRead, SchemaWrite};
-//TODO: rm clones, replace hashset wit bitset, optional parallel,
-// introduce sim_cache and reduce sim calculation, fix sorting,
-// reduce reallocation in search loops (use small buffer), proper preallocation, fix memory layout
-// batch simd_calculation somehow?, add better checks for public api, imp error handling
-// add pub, pri field to separate clean api, and provide clean abstraction for users
-// i have came to know my impl differ by lot from the paper, this is lot of redundant code, and unnecessary overhead
-// need to make this API idiomatic and clean, and also need to add more comments, docs
+
+/// Simple bitset backed by `Vec<u64>` for tracking visited nodes during graph traversal instead of `HashSet`.
+struct BitSet {
+    bits: Vec<u64>,
+}
+
+impl BitSet {
+    #[inline(always)]
+    fn with_capacity(n: usize) -> Self {
+        let words = n.div_ceil(64);
+        Self {
+            bits: vec![0u64; words],
+        }
+    }
+
+    /// Clears the bitset by resetting all bits to 0
+    #[inline(always)]
+    fn reset(&mut self) {
+        self.bits.fill(0);
+    }
+
+    /// Returns true if the bit was newly set (not already set).
+    #[inline(always)]
+    fn insert(&mut self, idx: usize) -> bool {
+        let word = idx / 64;
+        let bit = 1u64 << (idx % 64);
+        if word < self.bits.len() {
+            let was_set = self.bits[word] & bit != 0;
+            self.bits[word] |= bit;
+            !was_set
+        } else {
+            false
+        }
+    }
+}
+
+/// Reusable scratch buffers for `search_layer_knn` to avoid per-call allocations.
+struct SearchScratch {
+    visited: BitSet,
+    candidates: BinaryHeap<Candidate>,
+    results: BinaryHeap<ScoredResult>,
+    result_buf: Vec<(NodeIndex, f32)>,
+}
+
+impl SearchScratch {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            visited: BitSet::with_capacity(capacity),
+            candidates: BinaryHeap::with_capacity(capacity),
+            results: BinaryHeap::with_capacity(capacity),
+            result_buf: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.visited.reset();
+        self.candidates.clear();
+        self.results.clear();
+        self.result_buf.clear();
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Candidate(NodeIndex, f32);
@@ -94,22 +148,14 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.57275;
 ///                    ];
 ///
 ///    for vector in vectors.iter() {
-///        let id = hex::encode(gen_bytes(16)); // rand 16-byte ID for each node
-///        let level_asg = hnsw.get_random_level(); // <-- (-rand.ln() * mL).floor(), where mL is 1/ln(M)
-///        let metadata = format!("node-{}", i).to_bytes();
+///        let id = hex::encode(gen_bytes(16));
+///        let level_asg = hnsw.get_random_level();
+///        let metadata = b"some metadata".to_vec();
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
 ///    assert!(hnsw.size() == vectors.len());
 ///    assert!(hnsw.search(&[1.41, 1.41, 0.0], 3, None).len() == 3);
-///
-///    let res = hnsw.search(&[1.0, 0.0, 0.0], 2, None);
-///    assert!(res.contains(&("0".to_string(),
-///            Metrics::calculate(&[1.0, 0.0, 0.0], &[1.0, 0.0, 0.0],
-///            Some(Metrics::Cosine)))));
-///    assert!(res.contains(&("1".to_string(),
-///            Metrics::calculate(&[1.0, 0.0, 0.0], &[1.41, 1.41, 0.0],
-///            Some(Metrics::Cosine)))));
 /// }
 ///```
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
@@ -192,10 +238,10 @@ impl HNSW {
 
     /// EXPERIMENTAL: Fill the graph with random bullshit, good for testing and benchmarking,
     /// returns the final seed used for generation so you can reproduce the same data if needed
-    pub fn auto_fill(&mut self, count_fill: usize) -> Result<u64> {
-        let (vec, seed) = gen_vec(count_fill, 128, 198);
+    pub fn auto_fill(&mut self, fill_count: usize) -> Result<usize> {
+        let (vec, seed) = gen_vec(fill_count, 128, 198);
 
-        for v in vec.iter().take(count_fill) {
+        for v in vec.iter().take(fill_count) {
             let id = hex::encode(gen_bytes(32));
             let level = self.get_random_level();
             self.insert(id, v, vec![], level)?;
@@ -237,17 +283,22 @@ impl HNSW {
 
         let node_id = self.nodes.len();
 
+        let mut owned_vector = vector.to_vec();
+        if matches!(self.metrics, Some(Metrics::Cosine) | None) {
+            normalize_l2(&mut owned_vector);
+        }
+
         // Create the node with empty neighbor lists (we'll fill them in after finding neighbors)
         let node = Node {
             uuid: id.clone(),
             metadata,
-            vector: vector.to_vec(),
+            vector: owned_vector,
             neighbors: vec![Vec::with_capacity(self.max_neighbors); max_level + 1],
             max_level,
             tombstone: false,
         };
 
-        // Put in the map for reindexing helper
+        // put in the map for reindexing helper
         self.id_mapper.insert(id.clone(), node_id);
 
         if self.entry_point.is_none() {
@@ -261,7 +312,6 @@ impl HNSW {
         // Start search from entry point
         let mut current_nearest = self.entry_point.expect("Ohh no...entry_point is None");
         let entry_level = self.nodes[current_nearest].max_level;
-
         // Greedily traverse from top layer down to new node's level + 1
         // Just find the closest node, don't connect yet
         for layer in (max_level + 1..=entry_level).rev() {
@@ -270,6 +320,7 @@ impl HNSW {
         }
 
         // From new node's max_level down to 0, find neighbors and connect
+        let mut scratch = SearchScratch::with_capacity(self.ef_const * 2);
         for layer in (0..=max_level).rev() {
             // Find ef_construction nearest neighbors at this layer
             let candidates = self.search_layer_knn(
@@ -277,6 +328,7 @@ impl HNSW {
                 current_nearest,
                 self.ef_const,
                 layer,
+                &mut scratch,
             );
 
             let selected_count = candidates.len().min(self.max_neighbors);
@@ -350,66 +402,64 @@ impl HNSW {
     /// - Return top-k results sorted by similarity with computed similarity
     ///
     /// COMPLEXITY: O(log n) per operation instead of O(n log n)
+    /// Takes `&mut SearchScratch` to reuse allocations across calls.
     fn search_layer_knn(
         &self,
         query: &[f32],
         entry: NodeIndex,
         ef: usize,
         layer: usize,
+        scratch: &mut SearchScratch,
     ) -> Vec<(NodeIndex, f32)> {
         let ef = ef.max(1);
         let capacity = ef.saturating_mul(2).max(1);
-        let mut visited = HashSet::with_capacity(capacity);
 
-        // CANDIDATES Heap: explore highest similarity first
-        // pop() gives us the most promising node to explore next
-        let mut candidates: BinaryHeap<Candidate> = BinaryHeap::with_capacity(capacity);
-
-        // RESULTS heap: track top-k results
-        // peek() gives us the WORST result in our top-k (for pruning)
-        let mut results: BinaryHeap<ScoredResult> = BinaryHeap::with_capacity(ef);
+        scratch.clear();
+        if scratch.visited.bits.len() * 64 < capacity {
+            scratch.visited = BitSet::with_capacity(capacity);
+        }
+        if scratch.candidates.len() < capacity {
+            scratch.candidates = BinaryHeap::with_capacity(capacity);
+        }
+        if scratch.results.len() < ef {
+            scratch.results = BinaryHeap::with_capacity(ef);
+        }
 
         let entry_sim = self.similarity(query, &self.nodes[entry].vector, self.metrics.as_ref());
-        visited.insert(entry);
-        candidates.push(Candidate(entry, entry_sim));
-        results.push(ScoredResult(entry, entry_sim));
+        scratch.visited.insert(entry);
+        scratch.candidates.push(Candidate(entry, entry_sim));
+        scratch.results.push(ScoredResult(entry, entry_sim));
 
-        while let Some(Candidate(current_id, current_sim)) = candidates.pop() {
-            // If we've filled ef slots and current is worse than our worst result,
-            // all remaining candidates are also worse (heap gives best first) -> break early
-            if let Some(worst_result) = results.peek()
-                && results.len() >= ef
+        while let Some(Candidate(current_id, current_sim)) = scratch.candidates.pop() {
+            if let Some(worst_result) = scratch.results.peek()
+                && scratch.results.len() >= ef
                 && current_sim < worst_result.1
             {
-                // There's no point exploring it because all its neighbors will be even worse
                 break;
             }
 
-            // Explore neighbors of current candidate
             if layer <= self.nodes[current_id].max_level {
                 for &neighbor_id in &self.nodes[current_id].neighbors[layer] {
-                    if visited.insert(neighbor_id) {
+                    if scratch.visited.insert(neighbor_id) {
                         let sim = self.similarity(
                             query,
                             &self.nodes[neighbor_id].vector,
                             self.metrics.as_ref(),
                         );
 
-                        // WHATDAFAK: should we add this neighbor to our search frontier?
-                        // Add if we haven't filled ef slots OR new node is better than our worst
-                        let worst_if_full = results.peek().map(|r| r.1);
-                        let should_add = match (results.len(), worst_if_full) {
+                        let worst_if_full = scratch.results.peek().map(|r| r.1);
+                        let should_add = match (scratch.results.len(), worst_if_full) {
                             (len, _) if len < ef => true,            // still filling
                             (_, Some(worst)) if sim > worst => true, // better than worst
                             _ => false,
                         };
 
                         if should_add {
-                            candidates.push(Candidate(neighbor_id, sim));
-                            results.push(ScoredResult(neighbor_id, sim));
+                            scratch.candidates.push(Candidate(neighbor_id, sim));
+                            scratch.results.push(ScoredResult(neighbor_id, sim));
 
-                            if results.len() > ef {
-                                results.pop();
+                            if scratch.results.len() > ef {
+                                scratch.results.pop();
                             }
                         }
                     }
@@ -417,14 +467,16 @@ impl HNSW {
             }
         }
 
-        // Final sort for highest similarity first for output consistency
-        let mut sorted_results: Vec<ScoredResult> = results.into_vec();
-        sorted_results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        // drain results into the reusable buffer, sort, and return
+        scratch.result_buf.clear();
+        for ScoredResult(id, sim) in scratch.results.drain() {
+            scratch.result_buf.push((id, sim));
+        }
+        scratch
+            .result_buf
+            .sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
 
-        sorted_results
-            .into_iter()
-            .map(|ScoredResult(id, sim)| (id, sim))
-            .collect()
+        std::mem::take(&mut scratch.result_buf)
     }
 
     /// Remove connections to keep only the M closest neighbors
@@ -476,11 +528,12 @@ impl HNSW {
     }
 
     /// Similarity [`metric`](Metrics): cosine similarity, Euclidean similarity, or raw dot product etc
+    /// For Cosine: vectors are pre-normalized at insert, so similarity = dot product
     #[inline]
     fn similarity(&self, a: &[f32], b: &[f32], metrics: Option<&Metrics>) -> f32 {
         unsafe {
             match metrics {
-                Some(Metrics::Cosine) | None => cosine_similarity(a, b),
+                Some(Metrics::Cosine) | None => dot_product(a, b),
                 Some(Metrics::Euclidean) => euclidean_similarity(a, b),
                 Some(Metrics::RawDot) => dot_product(a, b),
             }
@@ -510,18 +563,29 @@ impl HNSW {
             return Vec::new();
         }
 
+        // Normalize query once for Cosine metric (stored vectors are already normalized)
+        let mut owned_query;
+        let query_normed: &[f32] = if matches!(self.metrics, Some(Metrics::Cosine) | None) {
+            owned_query = query.to_vec();
+            normalize_l2(&mut owned_query);
+            &owned_query
+        } else {
+            query
+        };
+
         let entry_level = self.nodes[entry].max_level;
         let mut current = entry;
 
         // Traverse from top to layer 1
         for layer in (1..=entry_level).rev() {
-            current = self.search_layer_greedy(query, current, layer);
+            current = self.search_layer_greedy(query_normed, current, layer);
         }
 
         // Search layer 0 thoroughly for K neighbors
         // `search_layer_knn` already returns sorted results
         // Return full ef results, search() handles truncation after filtering tombstones
-        self.search_layer_knn(query, current, ef, 0)
+        let mut scratch = SearchScratch::with_capacity(ef * 2);
+        self.search_layer_knn(query_normed, current, ef, 0, &mut scratch)
     }
 
     /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
@@ -804,7 +868,7 @@ pub struct Node {
     /// Vector representation of the node, any dimensionality
     pub vector: Vec<f32>,
     /// Metadata associated with the node
-    pub metadata: Vec<u8>, // TODO: Make it generic? or something else
+    pub metadata: Vec<u8>,
     /// Neighbors per layer, e.g `neighbors[0]` is the list of neighbors in layer 0
     pub neighbors: Vec<Vec<NodeIndex>>,
     /// The highest layer this node exists in

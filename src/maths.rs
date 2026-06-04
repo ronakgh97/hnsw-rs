@@ -1,4 +1,4 @@
-use std::ptr::read_unaligned;
+use std::ptr::{read_unaligned, write_unaligned};
 use wide::f32x8;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -39,19 +39,11 @@ impl Metrics {
     }
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[inline(always)]
 /// SIMD-optimized cosine similarity
 /// Safety: No bound/length checks
+#[inline(always)]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
-    //     panic!(
-    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
-    //         a.len(),
-    //         b.len()
-    //     );
-    // }
-
     const LANE: usize = 32;
 
     // process 32 elements per iteration (4 * 8-lane vectors)
@@ -111,9 +103,9 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     // handle remaining elements
     let remainder_start = chunks * LANE;
     for i in remainder_start..a.len() {
-        dot_sum += a[i] * b[i];
-        na_sum += a[i] * a[i];
-        nb_sum += b[i] * b[i];
+        dot_sum = a[i].mul_add(b[i], dot_sum);
+        na_sum = a[i].mul_add(a[i], na_sum);
+        nb_sum = b[i].mul_add(b[i], nb_sum);
     }
 
     let denominator = (na_sum * nb_sum).sqrt();
@@ -124,19 +116,46 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-#[allow(clippy::missing_safety_doc)]
+/// L2-normalize a vector slice in-place
 #[inline(always)]
+pub fn normalize_l2(v: &mut [f32]) {
+    const LANE: usize = 32;
+    unsafe {
+        let dot_prod_norm = dot_product(v, v);
+        if dot_prod_norm > f32::EPSILON {
+            let chunks = v.len() / LANE;
+            let inv = 1.0 / dot_prod_norm.sqrt();
+            let inv_v = f32x8::splat(inv);
+            let ptr = v.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * LANE;
+                let p = ptr.add(offset);
+
+                let v0 = f32x8::from(read_unaligned(p as *const [f32; 8]));
+                let v1 = f32x8::from(read_unaligned(p.add(8) as *const [f32; 8]));
+                let v2 = f32x8::from(read_unaligned(p.add(16) as *const [f32; 8]));
+                let v3 = f32x8::from(read_unaligned(p.add(24) as *const [f32; 8]));
+
+                write_unaligned(p as *mut [f32; 8], (v0 * inv_v).into());
+                write_unaligned(p.add(8) as *mut [f32; 8], (v1 * inv_v).into());
+                write_unaligned(p.add(16) as *mut [f32; 8], (v2 * inv_v).into());
+                write_unaligned(p.add(24) as *mut [f32; 8], (v3 * inv_v).into());
+            }
+
+            let remainder = chunks * LANE;
+            for i in remainder..v.len() {
+                *v.get_unchecked_mut(i) *= inv;
+            }
+        }
+    }
+}
+
 /// SIMD-optimized raw Dot product
 /// Safety: No bound/length checks
+#[inline(always)]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
-    //     panic!(
-    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
-    //         a.len(),
-    //         b.len()
-    //     );
-    // }
-
     const LANE: usize = 32;
 
     let chunks = a.len() / LANE;
@@ -179,27 +198,19 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     let mut total_sum = from_f32x8(sum);
 
     // handle remainder
-    let remainder_start = chunks * 8;
+    let remainder_start = chunks * LANE;
     for i in remainder_start..a.len() {
-        total_sum += a[i] * b[i];
+        total_sum = a[i].mul_add(b[i], total_sum);
     }
 
     total_sum
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[inline(always)]
 /// SIMD-optimized Euclidean similarity
 /// Safety: No bound/length checks
+#[inline(always)]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
-    // if a.is_empty() || b.is_empty() || a.len() != b.len() {
-    //     panic!(
-    //         "Vectors must not be empty and must have the same dimensions, got a: {}, b: {}",
-    //         a.len(),
-    //         b.len()
-    //     );
-    // }
-
     const LANE: usize = 32;
     let chunks = a.len() / LANE;
     let mut sum_sq = f32x8::ZERO;
@@ -246,18 +257,18 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     let mut dist = from_f32x8(sum_sq);
 
     // handle remainder
-    let remainder_start = chunks * 8;
+    let remainder_start = chunks * LANE;
     for i in remainder_start..a.len() {
         let diff = a[i] - b[i];
-        dist += diff * diff;
+        dist = diff.mul_add(diff, dist);
     }
 
     1.0 / (1.0 + dist.sqrt())
 }
 
-#[inline(always)]
 /// Multiply two matrices using 4 simd avx2 registers at a time, fallbacks if less, returning the resulting matrix
 /// The matrices are expected to be in row-major order and the dimensions must match
+#[inline(always)]
 pub fn matmul(
     matrix_a: &[f32],
     matrix_b: &[f32],
@@ -283,10 +294,10 @@ pub fn matmul(
 
 // TODO: write this using _mm256 for arm & x86_64, ditch `wide` crate
 
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
 /// In-place matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
 /// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub fn matmul_into(
     matrix_a: &[f32],
     matrix_b: &[f32],
@@ -450,10 +461,10 @@ pub fn matmul_into(
     }
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[inline(always)]
 /// In-place transpose of a matrix, the input and output slices must be the same size and the input matrix is expected to be in row-major order.
 /// The output will also be in row-major order but with rows and columns swapped.
+#[inline(always)]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output: &mut [f32]) {
     // let len = rows * cols;
     // if len != matrix.len() || len != output.len() {
