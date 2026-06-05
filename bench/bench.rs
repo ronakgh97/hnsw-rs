@@ -2,7 +2,7 @@ use ahash::HashSet;
 use anyhow::Result;
 use hnsw_rs::prelude::*;
 use indicatif::ProgressBar;
-use memmap2::Mmap;
+use memmap2::MmapMut;
 use rand::RngExt;
 use std::fs;
 use std::fs::File;
@@ -36,10 +36,10 @@ fn main() -> Result<()> {
         .parse()?;
 
     if !PathBuf::from(DATASET_CACHE).exists() {
-        write_compact_bin(PathBuf::from(path), num)?;
+        write_compact_datasets(PathBuf::from(path), num)?;
     }
 
-    let (num, dim, mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
+    let (num, dim, mut mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
 
     println!("Total vectors: {}, dimension: {}", num, dim);
     // println!("Sample vector: {:?}", get_vector(&mmap, 0, dim));
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     // Build largest index and cache it
     {
         if !PathBuf::from(INDEX_CACHE).exists() {
-            cache_index(num, dim, &mmap);
+            cache_index(num, dim, &mut mmap);
         } else {
             println!(
                 "Index cache already exists at {:?}, skipping index build",
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
     let mut bench_results = Vec::<BenchmarkResult>::new();
     // Bench starts from here
     {
-        let (num, _, mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
+        let (num, _, mut mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
         let hnsw = IndexStorage::read_from_disk(&PathBuf::from(INDEX_CACHE))?;
 
         let mut rng = rand::rng();
@@ -69,12 +69,12 @@ fn main() -> Result<()> {
         let ef_values = vec![32, 64, 128, 256, 512, 768];
         let k_values = vec![12, 24, 48, 96, 192, 384];
 
-        let queries_idx: Vec<_> = (0..query_count).map(|_| rng.random_range(0..num)).collect();
+        let mut queries_idx: Vec<_> = (0..query_count).map(|_| rng.random_range(0..num)).collect();
 
         // Warm up
         {
-            for query_vec in queries_idx.iter().take(warmup_count) {
-                let _ = hnsw.search(get_vector(&mmap, *query_vec, dim), 32, Some(64));
+            for query_vec in queries_idx.iter_mut().take(warmup_count) {
+                let _ = hnsw.search(get_vector(&mut mmap, *query_vec, dim), 32, Some(64));
             }
         }
 
@@ -89,7 +89,7 @@ fn main() -> Result<()> {
 
                 for query_vec in queries_idx.iter().take(query_count) {
                     // let idx = rng.random_range(0..num);
-                    let query_vec = get_vector(&mmap, *query_vec, dim);
+                    let query_vec = get_vector(&mut mmap, *query_vec, dim);
                     let _ = hnsw.search(query_vec, k, Some(ef));
                 }
                 let elapsed = time.elapsed();
@@ -114,10 +114,10 @@ fn main() -> Result<()> {
                 let mut total_recall = 0.0f32;
 
                 let start = Instant::now();
-                for query_vec in queries_idx.iter().take(recall_sample) {
-                    // let idx = rng.random_range(0..num);
-                    let query_vec = get_vector(&mmap, *query_vec, dim);
+                for query_vec in queries_idx.iter_mut().take(recall_sample) {
                     let ef = k * 4;
+                    // let idx = rng.random_range(0..num);
+                    let query_vec = get_vector(&mut mmap, *query_vec, dim);
                     let hnsw_search = hnsw.search(query_vec, k, Some(ef));
                     let brute_search = hnsw.brute_search(query_vec, k);
 
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
 
 /// Reads parquet files from input directory, extracts "openai" column, converts to f32 and writes to compact binary format: [num_vectors: u32][dim: u32][vectors: f32...]
 /// Datasets used: https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M
-fn write_compact_bin(input: PathBuf, num_files: usize) -> Result<()> {
+fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
     use arrow::array::{Array, Float64Array, ListArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -251,20 +251,24 @@ fn compare_recall_at_k(
 
 #[inline]
 /// Get a vector slice from mmap data
-fn get_vector(mmap: &Mmap, idx: usize, dim: usize) -> &[f32] {
+fn get_vector(mmap: &mut MmapMut, idx: usize, dim: usize) -> &mut [f32] {
     assert!(8 + (idx + 1) * dim * 4 <= mmap.len(), "Index out of bounds");
     let offset = 8 + idx * dim * 4; // 8 bytes header
     unsafe {
-        let ptr = mmap.as_ptr().add(offset) as *const f32;
-        std::slice::from_raw_parts(ptr, dim)
+        let ptr = mmap.as_mut_ptr().add(offset) as *mut f32;
+        std::slice::from_raw_parts_mut(ptr, dim)
     }
 }
 
 /// Loads compact vectors, format: [num_vectors: u32][dim: u32][vectors: f32...]
-/// Returns (num_vectors, dim, mmap)
-fn load_vectors_mmap(path: PathBuf) -> (usize, usize, Mmap) {
-    let path = File::open(&path).expect("Failed to open file");
-    let mmap = unsafe { Mmap::map(&path).expect("Failed to mmap file") };
+/// Returns (num_vectors, dim, mmap_mut)
+fn load_vectors_mmap(path: PathBuf) -> (usize, usize, MmapMut) {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("Failed to open file");
+    let mmap = unsafe { MmapMut::map_mut(&file).expect("Failed to mmap file") };
 
     // Read header
     let num_vectors = u32::from_le_bytes([mmap[0], mmap[1], mmap[2], mmap[3]]) as usize;
@@ -272,7 +276,7 @@ fn load_vectors_mmap(path: PathBuf) -> (usize, usize, Mmap) {
     (num_vectors, dim, mmap)
 }
 
-fn cache_index(num_vectors: usize, dim: usize, mmap: &Mmap) -> HNSW {
+fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
     println!("Building index with {} vectors...", num_vectors);
 
     let mut hnsw = HNSW::new(

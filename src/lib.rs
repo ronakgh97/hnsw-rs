@@ -44,14 +44,15 @@ pub mod prelude {
 fn basic_hnsw_test() {
     use crate::prelude::*;
     let mut hnsw = HNSW::default();
-    let (vectors, seed) = gen_vec(32, 128, 42);
+    let (mut vectors, seed) = gen_vec(32, 128, 42);
 
-    for vector in vectors.iter() {
+    for vector in vectors.iter_mut() {
         let id = encode(gen_bytes(16));
         let meta = gen_bytes(64);
         let level = hnsw.get_random_level();
         hnsw.insert(id, vector, meta, level).unwrap();
     }
+
     assert_eq!(seed, 74);
     assert_eq!(hnsw.size(), 32);
 
