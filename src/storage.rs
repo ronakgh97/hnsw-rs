@@ -5,7 +5,7 @@ use std::fs::File;
 use std::path;
 use wincode::{SchemaRead, SchemaWrite};
 
-pub const PREALLOCATION_SIZE: usize = 512 * 1024 * 1024;
+pub const PREALLOCATION_SIZE: usize = 1024 * 1024 * 1024; // oh, yeah
 
 /// Unit struct for handling disk operations related to HNSW index
 #[derive(SchemaRead, SchemaWrite)]

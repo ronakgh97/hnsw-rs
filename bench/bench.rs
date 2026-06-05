@@ -162,7 +162,7 @@ fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
 
     fs::create_dir_all(output.parent().unwrap())?;
 
-    let mut writer = std::io::BufWriter::new(File::create(&output)?);
+    let mut writer = std::io::BufWriter::with_capacity(1024 * 1024 * 8, File::create(&output)?);
 
     writer.write_all(&0u32.to_le_bytes())?;
     writer.write_all(&0u32.to_le_bytes())?;

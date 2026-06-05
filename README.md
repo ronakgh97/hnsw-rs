@@ -18,19 +18,19 @@ cargo run --bench bench  -- ../../datasets/dim1536_size1M 4
 # config; max_n: 32, ef_con: 256, m_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
 
-Search with ef: 32 took, QPS: 2294.19
-Search with ef: 64 took, QPS: 1835.23
-Search with ef: 128 took, QPS: 1082.21
-Search with ef: 256 took, QPS: 639.52
-Search with ef: 512 took, QPS: 360.50
-Search with ef: 768 took, QPS: 254.20
+Search with ef: 32 took, QPS: 3635.61
+Search with ef: 64 took, QPS: 2308.91
+Search with ef: 128 took, QPS: 1425.42
+Search with ef: 256 took, QPS: 811.65
+Search with ef: 512 took, QPS: 463.76
+Search with ef: 768 took, QPS: 317.07
 
-Recall@12: 0.9682, Time: 37.103794
-Recall@24: 0.9711, Time: 37.41726
-Recall@48: 0.9717, Time: 38.78235
-Recall@96: 0.9732, Time: 39.92503
-Recall@192: 0.9742, Time: 41.605167
-Recall@384: 0.9751, Time: 50.96047
+Recall@12: 0.9799, Time: 35.553806
+Recall@24: 0.9832, Time: 36.579773
+Recall@48: 0.9848, Time: 37.701332
+Recall@96: 0.9870, Time: 38.356697
+Recall@192: 0.9886, Time: 39.76736
+Recall@384: 0.9891, Time: 42.389786
 ```
 
 ![Bench plot](bench/plot.png)
