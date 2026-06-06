@@ -283,9 +283,10 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
         32,
         256,
         18,
-        1.0 / 16.0_f32.ln(),
+        1.0 / 32.0_f32.ln(),
         Some(Metrics::Cosine),
         num_vectors,
+        true,
     );
 
     let pg_bar = ProgressBar::new(num_vectors as u64);

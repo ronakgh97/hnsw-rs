@@ -56,7 +56,7 @@ fn basic_hnsw_test() {
     assert_eq!(seed, 74);
     assert_eq!(hnsw.size(), 32);
 
-    hnsw.auto_fill(32).unwrap();
+    hnsw.auto_fill(32, 128).unwrap();
     assert_eq!(hnsw.size(), 64);
     println!("Mem-size: {}", hnsw.mem_size());
 }

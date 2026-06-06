@@ -5,7 +5,7 @@ fn gen_helper() -> (String, Vec<u8>) {
     (encode(gen_bytes(32)), gen_bytes(64))
 }
 
-// THESE TEST ARE AI-GENERATED
+// TODO; THESE TEST ARE AI-GENERATED
 
 #[test]
 fn test_hnsw_basic_test() {
@@ -98,7 +98,7 @@ fn test_hnsw_search_with_metadata() {
 
 #[test]
 fn test_hnsw_search_with_cosine_metric() {
-    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::Cosine), 1000);
+    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::Cosine), 1000, true);
 
     let mut vectors = [
         vec![1.0, 0.0, 0.0],
@@ -115,7 +115,7 @@ fn test_hnsw_search_with_cosine_metric() {
     let results = hnsw.search(&mut [1.0, 0.0, 0.0], 2, None);
     assert_eq!(results.len(), 2);
 
-    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::Euclidean), 1000);
+    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::Euclidean), 1000, true);
 
     for vector in vectors.iter_mut() {
         let (idx, meta) = gen_helper();
@@ -126,7 +126,7 @@ fn test_hnsw_search_with_cosine_metric() {
     let results = hnsw.search(&mut [0.0, 0.0, 0.0], 2, None);
     assert_eq!(results.len(), 2);
 
-    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::RawDot), 1000);
+    let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(Metrics::RawDot), 1000, true);
 
     for vector in vectors.iter_mut() {
         let (idx, meta) = gen_helper();
@@ -152,7 +152,7 @@ fn test_hnsw_brute_force_search() {
     let mut query = vectors.0[5].clone();
 
     let hnsw_results = hnsw.search(&mut query, 5, None);
-    let brute_force_results = hnsw.brute_search(&query, 5);
+    let brute_force_results = hnsw.brute_search(&mut query, 5);
 
     let hnsw_ids: Vec<_> = hnsw_results.iter().map(|(id, _)| id).collect();
     let bf_ids: Vec<_> = brute_force_results.iter().map(|(id, _)| id).collect();

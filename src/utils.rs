@@ -1,4 +1,3 @@
-use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
 
@@ -11,7 +10,7 @@ pub fn gen_vec(num: usize, dim: usize, base_seed: usize) -> (Vec<Vec<f32>>, usiz
 
     for i in 0..num {
         let seed = (base_seed + i) as u64;
-        let mut rng = SmallRng::seed_from_u64(seed);
+        let mut rng = Xoshiro256StarStar::seed_from_u64(seed);
         let row: Vec<f32> = (0..dim)
             .map(|_| rng.random_range(-1.0f32..1.0f32))
             .collect();

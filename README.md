@@ -15,7 +15,7 @@ cargo run --bench bench  -- ../../datasets/dim1536_size1M 4
 ```
 
 ```shell
-# config; max_n: 32, ef_con: 256, m_l: 18, metrics: cosine
+# config; max_n: 32, ef_const: 256, max_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
 
 Search with ef: 32 took, QPS: 3635.61

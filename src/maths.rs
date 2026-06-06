@@ -39,7 +39,7 @@ impl Metrics {
     }
 }
 
-/// SIMD-optimized cosine similarity
+/// SIMD-optimized cosine similarity, use this for raw, un-normalized vectors.
 /// Safety: No bound/length checks
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
