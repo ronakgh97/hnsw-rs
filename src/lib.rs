@@ -44,7 +44,7 @@ pub mod prelude {
 fn basic_hnsw_test() {
     use crate::prelude::*;
     let mut hnsw = HNSW::default();
-    let (mut vectors, seed) = gen_vec(32, 128, 42);
+    let (mut vectors, seed) = gen_vec(1024, 128, 24);
 
     for vector in vectors.iter_mut() {
         let id = encode(gen_bytes(16));
@@ -53,10 +53,11 @@ fn basic_hnsw_test() {
         hnsw.insert(id, vector, meta, level).unwrap();
     }
 
-    assert_eq!(seed, 74);
-    assert_eq!(hnsw.size(), 32);
+    assert_eq!(seed, 1048);
+    assert_eq!(hnsw.size(), 1024);
 
-    hnsw.auto_fill(32, 128).unwrap();
-    assert_eq!(hnsw.size(), 64);
-    println!("Mem-size: {}", hnsw.mem_size());
+    hnsw.fast_fill(1024, 128).unwrap();
+    assert_eq!(hnsw.size(), 2048);
+    println!("Mem-size: {} bytes", hnsw.mem_size());
+    hnsw.debug();
 }

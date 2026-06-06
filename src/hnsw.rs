@@ -1,6 +1,5 @@
 use crate::maths::{Metrics, dot_product, euclidean_similarity, normalize_l2};
 use crate::prelude::gen_vec;
-use crate::utils::gen_bytes;
 use ahash::{HashMap, HashMapExt, HashSet};
 use anyhow::Result;
 use std::cmp::Ordering;
@@ -123,7 +122,7 @@ impl PartialOrd for ScoredResult {
 pub const DEFAULT_EF_MULTIPLIER: usize = 6;
 pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 
-/// Hierarchical Navigable Small World (HNSW) [Quick ref](https://arxiv.org/pdf/1603.09320)
+/// Hierarchical Navigable Small World (HNSW) [Paper ref](https://arxiv.org/pdf/1603.09320)
 ///
 /// Properties:
 /// - **Hierarchical**: Multiple layers with exponentially decreasing nodes per layer
@@ -152,8 +151,8 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///                    ];
 ///
 ///    for vector in vectors.iter_mut() { // need mut for l2 normalize
-///        let id = hex::encode(gen_bytes(16));
-///        let level_asg = hnsw.get_random_level();
+///        let id = hex::encode(gen_bytes(16)); // rand-uuid
+///        let level_asg = hnsw.get_random_level(); // compute mL from M
 ///        let metadata = b"some metadata".to_vec();
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
@@ -302,11 +301,11 @@ impl HNSW {
 
     /// EXPERIMENTAL: Fill the graph with random bullshit, good for testing and benchmarking,
     /// returns the final seed used for generation so result can reproduce the same data if needed
-    pub fn auto_fill(&mut self, fill_count: usize, dim: usize) -> Result<usize> {
+    pub fn fast_fill(&mut self, fill_count: usize, dim: usize) -> Result<usize> {
         let (mut vec, seed) = gen_vec(fill_count, dim, 198);
 
-        for v in vec.iter_mut().take(fill_count) {
-            let id = hex::encode(gen_bytes(32));
+        for (i, v) in vec.iter_mut().enumerate() {
+            let id = i.to_string();
             let level = self.get_random_level();
             self.insert(id, v, vec![], level)?;
         }
@@ -375,7 +374,7 @@ impl HNSW {
         let node = Node {
             uuid: id.clone(),
             metadata,
-            neighbors: vec![Vec::new(); max_level + 1],
+            neighbors: vec![Vec::with_capacity(self.max_neighbors); max_level + 1],
             max_level,
             tombstone: false,
         };
@@ -498,6 +497,112 @@ impl HNSW {
         }
 
         current
+    }
+
+    // /// Selects the closest neighbors directly without applying any diversity heuristic.
+    // /// Just takes the top K the closest candidates.
+    // /// `ALGORITHM 3 from the paper`.
+    // #[allow(unused)]
+    // #[inline]
+    // fn select_neighbors_simple(
+    //     &self,
+    //     candidates: &[(NodeIndex, f32)],
+    //     max_results: usize,
+    // ) -> Vec<NodeIndex> {
+    //     candidates
+    //         .iter()
+    //         .take(max_results)
+    //         .map(|&(id, _)| id)
+    //         .collect()
+    // }
+
+    /// Iterates candidates sorted by similarity. For each candidate,
+    /// checks if it's "redundant" — i.e., closer to an already-selected neighbor
+    /// than the query node is to that neighbor. Skips redundant candidates to make spatial diversity in the neighbor set.
+    /// `ALGORITHM 4 from the paper`.
+    #[inline(always)]
+    fn select_neighbors_heuristic(
+        &self,
+        query_id: NodeIndex,
+        candidates: &[(NodeIndex, f32)],
+        max_results: usize,
+        layer: usize,
+    ) -> Vec<NodeIndex> {
+        let query_vec = self.get_vector_slice(query_id);
+        let mut result: Vec<NodeIndex> = Vec::with_capacity(max_results);
+        let mut discarded: Vec<NodeIndex> = Vec::new();
+
+        let mut working: Vec<(NodeIndex, f32)> = candidates.to_vec();
+
+        // TODO; this is bit unclear
+
+        // Optionally extend candidates with neighbors of candidates (paper Alg. 4 lines 3-7)
+        if self.extend_candidates {
+            let original: Vec<NodeIndex> = candidates.iter().map(|&(id, _)| id).collect();
+            for candidate_id in &original {
+                if layer < self.nodes[*candidate_id].neighbors.len() {
+                    for &adj in &self.nodes[*candidate_id].neighbors[layer] {
+                        if self.nodes[adj].tombstone {
+                            // should they be avoided? same logic as `search_layer_knn`
+                            // which also skips tombstoned nodes when adding candidates
+                            continue;
+                        }
+                        // Avoid adding duplicates
+                        if !working.iter().any(|(id, _)| *id == adj) {
+                            // Compute similarity for the adjacent node and add to working set
+                            let sim = self.similarity(
+                                query_vec,
+                                self.get_vector_slice(adj),
+                                &self.metrics,
+                            );
+                            working.push((adj, sim));
+                        }
+                    }
+                }
+            }
+            // Sort the extended candidate list by similarity descending
+            working.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        }
+
+        // Iterate candidates in order of similarity, applying the heuristic to filter out "redundant" neighbors
+        for &(candidate_id, _sim) in &working {
+            if result.len() >= max_results {
+                break;
+            }
+            let candidate_vec = self.get_vector_slice(candidate_id);
+
+            // Check if candidate is "redundant" with respect to already selected neighbors
+            let mut is_good = true;
+            for &selected_id in &result {
+                let selected_vec = self.get_vector_slice(selected_id);
+                let dist_candidate_to_selected = self.distance(candidate_vec, selected_vec);
+                let dist_query_to_selected = self.distance(query_vec, selected_vec);
+
+                // redundant if candidate is closer to selected neighbor than query is to that neighbor
+                if dist_candidate_to_selected < dist_query_to_selected {
+                    is_good = false;
+                    break;
+                }
+            }
+
+            if is_good {
+                result.push(candidate_id);
+            } else {
+                discarded.push(candidate_id);
+            }
+        }
+
+        // Optionally add back discarded candidates to maintain a fixed number of neighbors (paper Alg. 4 lines 15-17)
+        if self.keep_pruned_connections && result.len() < max_results {
+            for id in &discarded {
+                if result.len() >= max_results {
+                    break;
+                }
+                result.push(*id);
+            }
+        }
+
+        result
     }
 
     /// K-NN search at a specific layer: find K nearest neighbors
@@ -640,112 +745,6 @@ impl HNSW {
         }
     }
 
-    // /// Selects the closest neighbors directly without applying any diversity heuristic.
-    // /// Just takes the top K the closest candidates.
-    // /// `ALGORITHM 3 from the paper`.
-    // #[allow(unused)]
-    // #[inline]
-    // fn select_neighbors_simple(
-    //     &self,
-    //     candidates: &[(NodeIndex, f32)],
-    //     max_results: usize,
-    // ) -> Vec<NodeIndex> {
-    //     candidates
-    //         .iter()
-    //         .take(max_results)
-    //         .map(|&(id, _)| id)
-    //         .collect()
-    // }
-
-    /// Iterates candidates sorted by similarity. For each candidate,
-    /// checks if it's "redundant" — i.e., closer to an already-selected neighbor
-    /// than the query node is to that neighbor. Skips redundant candidates to make spatial diversity in the neighbor set.
-    /// `ALGORITHM 4 from the paper`.
-    #[inline(always)]
-    fn select_neighbors_heuristic(
-        &self,
-        query_id: NodeIndex,
-        candidates: &[(NodeIndex, f32)],
-        max_results: usize,
-        layer: usize,
-    ) -> Vec<NodeIndex> {
-        let query_vec = self.get_vector_slice(query_id);
-        let mut result: Vec<NodeIndex> = Vec::with_capacity(max_results);
-        let mut discarded: Vec<NodeIndex> = Vec::new();
-
-        let mut working: Vec<(NodeIndex, f32)> = candidates.to_vec();
-
-        // TODO; this is bit unclear
-
-        // Optionally extend candidates with neighbors of candidates (paper Alg. 4 lines 3-7)
-        if self.extend_candidates {
-            let original: Vec<NodeIndex> = candidates.iter().map(|&(id, _)| id).collect();
-            for candidate_id in &original {
-                if layer < self.nodes[*candidate_id].neighbors.len() {
-                    for &adj in &self.nodes[*candidate_id].neighbors[layer] {
-                        if self.nodes[adj].tombstone {
-                            // should they be avoided? same logic as `search_layer_knn`
-                            // which also skips tombstoned nodes when adding candidates
-                            continue;
-                        }
-                        // Avoid adding duplicates
-                        if !working.iter().any(|(id, _)| *id == adj) {
-                            // Compute similarity for the adjacent node and add to working set
-                            let sim = self.similarity(
-                                query_vec,
-                                self.get_vector_slice(adj),
-                                &self.metrics,
-                            );
-                            working.push((adj, sim));
-                        }
-                    }
-                }
-            }
-            // Sort the extended candidate list by similarity descending
-            working.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
-        }
-
-        // Iterate candidates in order of similarity, applying the heuristic to filter out "redundant" neighbors
-        for &(candidate_id, _sim) in &working {
-            if result.len() >= max_results {
-                break;
-            }
-            let candidate_vec = self.get_vector_slice(candidate_id);
-
-            // Check if candidate is "redundant" with respect to already selected neighbors
-            let mut is_good = true;
-            for &selected_id in &result {
-                let selected_vec = self.get_vector_slice(selected_id);
-                let dist_candidate_to_selected = self.distance(candidate_vec, selected_vec);
-                let dist_query_to_selected = self.distance(query_vec, selected_vec);
-
-                // redundant if candidate is closer to selected neighbor than query is to that neighbor
-                if dist_candidate_to_selected < dist_query_to_selected {
-                    is_good = false;
-                    break;
-                }
-            }
-
-            if is_good {
-                result.push(candidate_id);
-            } else {
-                discarded.push(candidate_id);
-            }
-        }
-
-        // Optionally add back discarded candidates to maintain a fixed number of neighbors (paper Alg. 4 lines 15-17)
-        if self.keep_pruned_connections && result.len() < max_results {
-            for id in &discarded {
-                if result.len() >= max_results {
-                    break;
-                }
-                result.push(*id);
-            }
-        }
-
-        result
-    }
-
     /// Returns the max number of neighbors for a given layer.
     /// Layer 0 uses M0 = 2*M per the HNSW paper (Section 4.1).
     #[inline(always)]
@@ -835,6 +834,42 @@ impl HNSW {
         self.search_layer_knn(query, current, ef, 0, &mut scratch)
     }
 
+    /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
+    /// Returns results as (node_index, similarity) tuples sorted by similarity (highest first), empty if no entry point or k=0
+    ///
+    /// - `query` - The query vector
+    /// - `k` - Number of nearest neighbors to return
+    /// - `ef_search` - Optional bounded width for search. If None, uses k * DEFAULT_EF_MULTIPLIER
+    pub fn search(
+        &self,
+        query: &mut [f32],
+        k: usize,
+        ef_search: Option<usize>,
+    ) -> Vec<(NodeID, f32)> {
+        self.search_helper(query, k, ef_search)
+            .into_iter()
+            .map(|(id, sim)| (self.nodes[id].uuid.clone(), sim))
+            .collect()
+    }
+
+    #[inline]
+    /// Search and return results with metadata, similiar to [search](HNSW::search), but collects metadata on return
+    /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
+    pub fn search_metadata(
+        &self,
+        query: &mut [f32],
+        k: usize,
+        ef_search: Option<usize>,
+    ) -> Vec<(NodeID, f32, Vec<u8>)> {
+        self.search_helper(query, k, ef_search)
+            .into_iter()
+            .map(|(id, sim)| {
+                let node = &self.nodes[id];
+                (node.uuid.clone(), sim, node.metadata.clone())
+            })
+            .collect()
+    }
+
     /// Internal helper: loop that grows `ef` until we have `k` non-tombstoned results and the
     /// kth similarity "stabilizes" (or we hit `max_ef`).
     fn search_helper(
@@ -882,42 +917,6 @@ impl HNSW {
             let grown = ((current_ef as f32) * DEFAULT_EF_INC_FACTOR).ceil() as usize;
             current_ef = grown.max(current_ef + 1).min(max_ef);
         }
-    }
-
-    /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
-    /// Returns results as (node_index, similarity) tuples sorted by similarity (highest first), empty if no entry point or k=0
-    ///
-    /// - `query` - The query vector
-    /// - `k` - Number of nearest neighbors to return
-    /// - `ef_search` - Optional bounded width for search. If None, uses k * DEFAULT_EF_MULTIPLIER
-    pub fn search(
-        &self,
-        query: &mut [f32],
-        k: usize,
-        ef_search: Option<usize>,
-    ) -> Vec<(NodeID, f32)> {
-        self.search_helper(query, k, ef_search)
-            .into_iter()
-            .map(|(id, sim)| (self.nodes[id].uuid.clone(), sim))
-            .collect()
-    }
-
-    #[inline]
-    /// Search and return results with metadata, similiar to [search](HNSW::search), but collects metadata on return
-    /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
-    pub fn search_metadata(
-        &self,
-        query: &mut [f32],
-        k: usize,
-        ef_search: Option<usize>,
-    ) -> Vec<(NodeID, f32, Vec<u8>)> {
-        self.search_helper(query, k, ef_search)
-            .into_iter()
-            .map(|(id, sim)| {
-                let node = &self.nodes[id];
-                (node.uuid.clone(), sim, node.metadata.clone())
-            })
-            .collect()
     }
 
     #[inline]
@@ -1131,7 +1130,7 @@ impl HNSW {
 
     #[inline]
     /// Returns the ratio of tombstoned nodes to total nodes
-    /// Can used in trigger when to clean up & reindex
+    /// Can be used in trigger when to clean up & reindex
     pub fn tombstone_ratio(&self) -> f32 {
         if self.nodes.is_empty() {
             0.0
@@ -1139,11 +1138,31 @@ impl HNSW {
             self.tombstone_count() as f32 / self.nodes.len() as f32
         }
     }
+
+    pub fn debug(&self) {
+        println!("Total nodes: {}", self.nodes.len());
+        println!(
+            "Entry point UUID/Index: {:?}/{:?}, Max Level: {:?}",
+            self.entry_point
+                .and_then(|id| self.nodes.get(id))
+                .map(|node| node.uuid.clone()),
+            self.entry_point,
+            self.entry_point
+                .and_then(|id| self.nodes.get(id))
+                .map(|node| node.max_level)
+        );
+        println!("Layer distribution:");
+        for layer in 0..=self.max_layers {
+            let count = self.get_nodes_at_level(layer).len();
+            println!("-L{}: {} nodes", layer, count);
+        }
+    }
 }
 
 /// Array index into nodes Vec
 pub type NodeIndex = usize;
 
+// TODO; change this is 256 bit uuid
 /// Unique identifier for a node. (Stable across reindexing)
 /// It's just a string that is provided when inserting a node
 /// This helps for tracking node when rebuilding the graph

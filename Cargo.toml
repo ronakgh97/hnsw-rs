@@ -21,7 +21,7 @@ harness = false
 [profile.release]
 opt-level = 3
 lto = "fat"
-codegen-units = 1
+codegen-units = 2
 panic = "abort"
 strip = true
 incremental = false
@@ -34,14 +34,14 @@ incremental = true
 
 [dependencies]
 wincode = { version = "0.5.5", features = ["derive"] }
-rand = "0.10.1"
-ahash = "0.8.12"
-rayon = "1.12.0"
-wide = "1.4.0"
-anyhow = "1.0.102"
 memmap2 = "0.9.10"
+ahash = "0.8.12"
+wide = "1.5.0"
+rayon = "1.12.0"
 sha2 = "0.11.0"
+anyhow = "1.0.102"
 hex = "0.4.3"
+rand = "0.10.1"
 rand_xoshiro = "0.8.1"
 # aligned-vec = "0.6.4"
 

@@ -24,8 +24,8 @@ pub fn gen_vec(num: usize, dim: usize, base_seed: usize) -> (Vec<Vec<f32>>, usiz
 /// Generates a random byte vector of given size
 #[inline]
 pub fn gen_bytes(size: usize) -> Vec<u8> {
-    let mut rng = Xoshiro256StarStar::from_rng(&mut rand::rng());
     let mut tmp = vec![0u8; size];
+    let mut rng = Xoshiro256StarStar::from_rng(&mut rand::rng());
     rng.fill(&mut tmp);
     tmp
 }
