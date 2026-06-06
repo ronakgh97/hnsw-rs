@@ -15,22 +15,24 @@ cargo run --bench bench  -- ../../datasets/dim1536_size1M 4
 ```
 
 ```shell
-# config; max_n: 32, ef_const: 256, max_l: 18, metrics: cosine
-Total vectors: 153848, dimension: 1536
+# config; max_n: 32, ef_const: 256, max_l: 32, metrics: cosine
+Total vectors: 153848 dimension: 1536
+Building index with 153848 vectors...
+Index built in 540.5682286s and cached to disk.
 
-Search with ef: 32 took, QPS: 3635.61
-Search with ef: 64 took, QPS: 2308.91
-Search with ef: 128 took, QPS: 1425.42
-Search with ef: 256 took, QPS: 811.65
-Search with ef: 512 took, QPS: 463.76
-Search with ef: 768 took, QPS: 317.07
+Search with ef: 32 took, QPS: 1706.59
+Search with ef: 64 took, QPS: 1032.82
+Search with ef: 128 took, QPS: 616.87
+Search with ef: 256 took, QPS: 364.37
+Search with ef: 512 took, QPS: 210.39
+Search with ef: 768 took, QPS: 155.18
 
-Recall@12: 0.9799, Time: 35.553806
-Recall@24: 0.9832, Time: 36.579773
-Recall@48: 0.9848, Time: 37.701332
-Recall@96: 0.9870, Time: 38.356697
-Recall@192: 0.9886, Time: 39.76736
-Recall@384: 0.9891, Time: 42.389786
+Recall@12: 0.9985, Time: 32.774128
+Recall@24: 0.9989, Time: 33.136284
+Recall@48: 0.9990, Time: 35.135895
+Recall@96: 0.9993, Time: 36.384808
+Recall@192: 0.9996, Time: 38.89311
+Recall@384: 0.9997, Time: 42.66928
 ```
 
 ![Bench plot](bench/plot.png)

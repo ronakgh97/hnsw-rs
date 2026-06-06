@@ -4,6 +4,22 @@
 //! This implementation is inspired by this [paper](https://arxiv.org/pdf/1603.09320)
 //! but isn't fully based on that, I have done some my own simplifications and is `reasonably` efficient for most use cases, but not optimized for production use yet, and is still in early stages of development [GitHub](https://github.com/ronakgh97/hnsw-rs)
 //!
+//! ```rust
+//! use hnsw_rs::hnsw::*;
+//! fn main() {
+//!     let hnsw = HNSW::default();
+//!
+//!     // fill with rand 1024 vec, 3 dim for testing
+//!     hnsw.fast_fill(1024, 3).unwrap();
+//!
+//!     // perform search for 10 nearest neighbors
+//!     let query = vec![0.5, 0.5, 0.5];
+//!     let results = hnsw.search(&query, 10, None);
+//!     println!("Top 10 results: {:#?}", results);
+//!     assert_eq!(results.len(), 10);
+//! }
+//! ```
+//!
 //! ## Features
 //!
 //! - **Wincode Support**: Makes serialization/deserialization efficient and compact for disk-storage
@@ -26,38 +42,33 @@
 //! - <https://arxiv.org/html/2412.01940v1>
 //! - <https://www.techrxiv.org/users/922842/articles/1311476-a-comparative-study-of-hnsw-implementations-for-scalable-approximate-nearest-neighbor-search>
 //!
-mod hnsw;
-mod maths;
-mod quant;
-mod storage;
-mod utils;
+pub mod hnsw;
+pub mod maths;
+pub mod quant;
+pub mod storage;
+pub mod utils;
 
 pub mod prelude {
     pub use crate::hnsw::*;
     pub use crate::maths::*;
     pub use crate::storage::*;
     pub use crate::utils::*;
-    pub use hex::*;
 }
 
 #[test]
-fn basic_hnsw_test() {
+fn lib_hnsw_test() {
     use crate::prelude::*;
     let mut hnsw = HNSW::default();
-    let (mut vectors, seed) = gen_vec(1024, 128, 24);
-
-    for vector in vectors.iter_mut() {
-        let id = encode(gen_bytes(16));
-        let meta = gen_bytes(64);
-        let level = hnsw.get_random_level();
-        hnsw.insert(id, vector, meta, level).unwrap();
-    }
-
-    assert_eq!(seed, 1048);
-    assert_eq!(hnsw.size(), 1024);
-
+    assert_eq!(hnsw.size(), 0);
     hnsw.fast_fill(1024, 128).unwrap();
-    assert_eq!(hnsw.size(), 2048);
+    println!("Inserted: 1024");
+    hnsw.fast_fill(1024, 128).unwrap();
+    println!("Inserted: 2048");
+    hnsw.fast_fill(1024, 128).unwrap();
+    println!("Inserted: 3072");
+    hnsw.fast_fill(1024, 128).unwrap();
+    println!("Inserted: 4096");
+    assert_eq!(hnsw.size(), 4096);
     println!("Mem-size: {} bytes", hnsw.mem_size());
-    hnsw.debug();
+    hnsw.debug(None);
 }

@@ -31,17 +31,10 @@ impl BitSet {
     fn insert(&mut self, idx: usize) -> bool {
         let word = idx / 64;
         let bit = 1u64 << (idx % 64);
-        if word < self.bits.len() {
-            let was_set = self.bits[word] & bit != 0;
-            self.bits[word] |= bit;
-            !was_set
-        } else {
-            let new_len = word + 1;
-            self.bits.resize(new_len, 0);
-            let was_set = self.bits[word] & bit != 0;
-            self.bits[word] |= bit;
-            !was_set
-        }
+        let chunk = &mut self.bits[word];
+        let was_set = (*chunk & bit) != 0;
+        *chunk |= bit;
+        !was_set
     }
 }
 
@@ -138,9 +131,10 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///
 ///```rust
 ///use hnsw_rs::prelude::*;
+///use fastrand::fill;
 ///
 /// fn main() {
-///    let mut hnsw = HNSW::default();
+/// let mut hnsw = HNSW::default();
 ///
 ///    let mut vectors = vec![
 ///                    vec![1.0, 0.0, 0.0],
@@ -151,9 +145,10 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///                    ];
 ///
 ///    for vector in vectors.iter_mut() { // need mut for l2 normalize
-///        let id = hex::encode(gen_bytes(16)); // rand-uuid
+///        let mut id = [0u8; 32];
+///        fastrand::fill(&mut id); // 256-bit random [u8; 32]
 ///        let level_asg = hnsw.get_random_level(); // compute mL from M
-///        let metadata = b"some metadata".to_vec();
+///        let metadata = vec![]; // metadata can be anything (std vec)
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
@@ -194,7 +189,7 @@ pub struct HNSW {
     /// Similarity metric to use for distance calculations (default: Cosine)
     metrics: Metrics,
     /// Mapping from node uuid to array index
-    id_mapper: HashMap<NodeID, NodeIndex>,
+    id_mapper: HashMap<NodeUUID, NodeIndex>,
 }
 
 impl Default for HNSW {
@@ -279,11 +274,11 @@ impl HNSW {
     }
 
     /// Generates a random level for a new node based on an exponential distribution uses the HNSW paper formula:
-    /// floor(-ln(rand) * mL) where mL is the level norm factor stored in `distribution_bias` (paper default: 1/ln(M), e.g. 0.36 for M=16).
+    /// floor(-ln(<rand(0...1)>) * mL) where mL is the level norm factor stored in `distribution_bias` (paper default: 1/ln(M), e.g. 0.36 for M=16).
     /// Used this in [`insert`](HNSW::insert), or you may use your own distribution curve
     #[inline(always)]
     pub fn get_random_level(&self) -> usize {
-        let r: f32 = rand::random::<f32>().max(1e-9);
+        let r: f32 = 1.0 - fastrand::f32();
         let level = (-r.ln() * self.distribution_bias).floor() as usize;
         level.min(self.max_layers - 1)
     }
@@ -303,9 +298,11 @@ impl HNSW {
     /// returns the final seed used for generation so result can reproduce the same data if needed
     pub fn fast_fill(&mut self, fill_count: usize, dim: usize) -> Result<usize> {
         let (mut vec, seed) = gen_vec(fill_count, dim, 198);
+        let mut id = vec![0u8; fill_count * 32];
+        fastrand::fill(&mut id);
 
         for (i, v) in vec.iter_mut().enumerate() {
-            let id = i.to_string();
+            let id: [u8; 32] = id[i * 32..(i + 1) * 32].try_into()?;
             let level = self.get_random_level();
             self.insert(id, v, vec![], level)?;
         }
@@ -324,17 +321,20 @@ impl HNSW {
     /// `ALGORITHM 1 from paper`
     pub fn insert(
         &mut self,
-        id: NodeID,
+        id: NodeUUID,
         vector: &mut [f32],
         metadata: Vec<u8>,
         max_level: usize,
-    ) -> Result<NodeID> {
+    ) -> Result<NodeUUID> {
         if id.is_empty() || vector.is_empty() {
-            return Err(anyhow::anyhow!("Node ID and vector cannot be empty"));
+            return Err(anyhow::anyhow!("NodeUUID or Vector cannot be empty"));
         }
 
         if self.id_mapper.contains_key(&id) {
-            return Err(anyhow::anyhow!("Node ID already exists"));
+            return Err(anyhow::anyhow!(
+                "Node uuid: {} already exists",
+                hex::encode(id)
+            ));
         }
 
         if self.entry_point.is_some() && self.dim != vector.len() {
@@ -372,7 +372,7 @@ impl HNSW {
         // create the node with empty neighbor lists
         // (we'll fill them in after finding neighbors)
         let node = Node {
-            uuid: id.clone(),
+            uuid: id,
             metadata,
             neighbors: vec![Vec::with_capacity(self.max_neighbors); max_level + 1],
             max_level,
@@ -380,7 +380,7 @@ impl HNSW {
         };
 
         // put in the map for reindexing helper
-        self.id_mapper.insert(id.clone(), node_id);
+        self.id_mapper.insert(id, node_id);
 
         if self.entry_point.is_none() {
             self.nodes.push(node);
@@ -845,10 +845,10 @@ impl HNSW {
         query: &mut [f32],
         k: usize,
         ef_search: Option<usize>,
-    ) -> Vec<(NodeID, f32)> {
+    ) -> Vec<(NodeUUID, f32)> {
         self.search_helper(query, k, ef_search)
             .into_iter()
-            .map(|(id, sim)| (self.nodes[id].uuid.clone(), sim))
+            .map(|(id, sim)| (self.nodes[id].uuid, sim))
             .collect()
     }
 
@@ -860,12 +860,12 @@ impl HNSW {
         query: &mut [f32],
         k: usize,
         ef_search: Option<usize>,
-    ) -> Vec<(NodeID, f32, Vec<u8>)> {
+    ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
         self.search_helper(query, k, ef_search)
             .into_iter()
             .map(|(id, sim)| {
                 let node = &self.nodes[id];
-                (node.uuid.clone(), sim, node.metadata.clone())
+                (node.uuid, sim, node.metadata.clone())
             })
             .collect()
     }
@@ -922,24 +922,21 @@ impl HNSW {
     #[inline]
     /// Brute-force parallel search for testing and validation.
     /// Returns similar to [`search`](HNSW::search)
-    pub fn brute_search(&self, query: &mut [f32], k: usize) -> Vec<(NodeID, f32)> {
+    pub fn brute_search(&self, query: &mut [f32], k: usize) -> Vec<(NodeUUID, f32)> {
         use rayon::iter::*;
         let dim = self.dim;
         let flat = &self.flat_vectors;
         if self.metrics == Metrics::Cosine {
             normalize_l2(query);
         }
-        let mut results: Vec<(NodeID, f32)> = self
+        let mut results: Vec<(NodeUUID, f32)> = self
             .nodes
             .par_iter()
             .enumerate()
             .filter(|(_, node)| !node.tombstone)
             .map(|(i, node)| {
                 let vec_slice = &flat[i * dim..(i + 1) * dim];
-                (
-                    node.uuid.clone(),
-                    self.similarity(query, vec_slice, &self.metrics),
-                )
+                (node.uuid, self.similarity(query, vec_slice, &self.metrics))
             })
             .collect();
 
@@ -956,7 +953,7 @@ impl HNSW {
         &self,
         query: &mut [f32],
         k: usize,
-    ) -> Vec<(NodeID, f32, Vec<u8>)> {
+    ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
         use rayon::iter::*;
         let dim = self.dim;
         let flat = &self.flat_vectors;
@@ -965,7 +962,7 @@ impl HNSW {
             normalize_l2(query);
         }
 
-        let mut results: Vec<(NodeID, f32, Vec<u8>)> = self
+        let mut results: Vec<(NodeUUID, f32, Vec<u8>)> = self
             .nodes
             .par_iter()
             .enumerate()
@@ -973,7 +970,7 @@ impl HNSW {
             .map(|(i, node)| {
                 let vec_slice = &flat[i * dim..(i + 1) * dim];
                 (
-                    node.uuid.clone(),
+                    node.uuid,
                     self.similarity(query, vec_slice, &self.metrics),
                     node.metadata.clone(),
                 )
@@ -988,7 +985,7 @@ impl HNSW {
 
     /// Get node by node ID, returns None if not found or tombstoned
     #[inline]
-    pub fn get_node(&self, uuid: &str) -> Option<&Node> {
+    pub fn get_node(&self, uuid: &[u8; 32]) -> Option<&Node> {
         self.id_mapper
             .get(uuid)
             .and_then(|&id| self.nodes.get(id))
@@ -1024,7 +1021,7 @@ impl HNSW {
 
     /// Returns the vector for the given node UUID, or None if not found/tombstoned
     #[inline]
-    pub fn get_vector(&self, uuid: &str) -> Option<&[f32]> {
+    pub fn get_vector(&self, uuid: &[u8; 32]) -> Option<&[f32]> {
         self.id_mapper
             .get(uuid)
             .map(|&idx| self.get_vector_slice(idx))
@@ -1044,14 +1041,14 @@ impl HNSW {
     /// id entry is removed so the same UUID can be re-inserted later.
     /// Returns err if node ID not found.
     #[inline(always)]
-    pub fn delete_node(&mut self, uuid: &str) -> Result<()> {
+    pub fn delete_node(&mut self, uuid: &[u8; 32]) -> Result<()> {
         let node_idx = if let Some(idx) = self.id_mapper.get(uuid).copied() {
             if let Some(node) = self.nodes.get_mut(idx) {
                 node.tombstone = true;
             }
             idx
         } else {
-            return Err(anyhow::anyhow!("Node index '{}' not found", uuid));
+            return Err(anyhow::anyhow!("Node uuid {} not found", hex::encode(uuid)));
         };
 
         // Find and sets new entry point when the current one is deleted
@@ -1139,22 +1136,37 @@ impl HNSW {
         }
     }
 
-    pub fn debug(&self) {
+    // TODO; complete this
+    /// Debug method to print summary of the graph, including entry point info and layer distribution, quality
+    /// Optionally takes a NodeUUID for deep recursively insight.
+    pub fn debug(&self, _uuid: Option<&[u8; 32]>) {
         println!("Total nodes: {}", self.nodes.len());
-        println!(
-            "Entry point UUID/Index: {:?}/{:?}, Max Level: {:?}",
-            self.entry_point
-                .and_then(|id| self.nodes.get(id))
-                .map(|node| node.uuid.clone()),
-            self.entry_point,
-            self.entry_point
-                .and_then(|id| self.nodes.get(id))
-                .map(|node| node.max_level)
-        );
+        if let Some(ep_idx) = self.entry_point
+            && let Some(ep) = self.nodes.get(ep_idx)
+        {
+            println!(
+                "Entry point UUID/Index: {}/{} (max_level {})",
+                hex::encode(ep.uuid),
+                ep_idx,
+                ep.max_level
+            );
+        } else {
+            println!("No entry point");
+        }
+
         println!("Layer distribution:");
         for layer in 0..=self.max_layers {
             let count = self.get_nodes_at_level(layer).len();
-            println!("-L{}: {} nodes", layer, count);
+            println!(
+                "-L{}: {} nodes ({:.4}%)",
+                layer,
+                count,
+                if !self.nodes.is_empty() {
+                    (count as f32 / self.nodes.len() as f32) * 100.0
+                } else {
+                    0.0
+                }
+            );
         }
     }
 }
@@ -1162,17 +1174,16 @@ impl HNSW {
 /// Array index into nodes Vec
 pub type NodeIndex = usize;
 
-// TODO; change this is 256 bit uuid
 /// Unique identifier for a node. (Stable across reindexing)
-/// It's just a string that is provided when inserting a node
-/// This helps for tracking node when rebuilding the graph
-pub type NodeID = String;
+/// A 256-bit (32-byte) uuid provided when inserting a node.
+/// This helps for tracking node when rebuilding the graph.
+pub type NodeUUID = [u8; 32];
 
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 /// Represents a node in the HNSW graph (vector are stored in SoA layout).
 pub struct Node {
     /// Unique Stable Identifier for the node, provided during insertion
-    pub uuid: NodeID,
+    pub uuid: NodeUUID,
     /// Metadata associated with the node
     pub metadata: Vec<u8>,
     /// Neighbors per layer, e.g `neighbors[0]` is the list of neighbors in layer 0

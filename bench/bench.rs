@@ -3,7 +3,6 @@ use anyhow::Result;
 use hnsw_rs::prelude::*;
 use indicatif::ProgressBar;
 use memmap2::MmapMut;
-use rand::RngExt;
 use std::fs;
 use std::fs::File;
 use std::io::{Seek, Write};
@@ -63,13 +62,13 @@ fn main() -> Result<()> {
         let (num, _, mut mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
         let hnsw = IndexStorage::read_from_disk(&PathBuf::from(INDEX_CACHE))?;
 
-        let mut rng = rand::rng();
+        let mut rng = fastrand::Rng::new();
         let query_count = 4096;
         let warmup_count = 2156;
         let ef_values = vec![32, 64, 128, 256, 512, 768];
         let k_values = vec![12, 24, 48, 96, 192, 384];
 
-        let mut queries_idx: Vec<_> = (0..query_count).map(|_| rng.random_range(0..num)).collect();
+        let mut queries_idx: Vec<_> = (0..query_count).map(|_| rng.usize(0..num)).collect();
 
         // Warm up
         {
@@ -231,15 +230,11 @@ fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
 #[inline]
 /// Calculate Recall@K - what fraction of HNSW results are in the true top-k (brute force)
 fn compare_recall_at_k(
-    hnsw_results: &[(NodeID, f32)],
-    brute_results: &[(NodeID, f32)],
+    hnsw_results: &[(NodeUUID, f32)],
+    brute_results: &[(NodeUUID, f32)],
     k: usize,
 ) -> f32 {
-    let brute_set: HashSet<NodeID> = brute_results
-        .iter()
-        .take(k)
-        .map(|(id, _)| id.clone())
-        .collect();
+    let brute_set: HashSet<NodeUUID> = brute_results.iter().take(k).map(|(id, _)| *id).collect();
     let mut hits = 0;
     for (id, _) in hnsw_results.iter().take(k) {
         if brute_set.contains(id) {
@@ -291,14 +286,20 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
 
     let pg_bar = ProgressBar::new(num_vectors as u64);
 
+    let mut flat_id = vec![0u8; num_vectors * 32];
+    fastrand::fill(&mut flat_id);
+
     let time = Instant::now();
     for i in 0..num_vectors {
         pg_bar.inc(1);
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
-        let id = format!("uuid_{}", i);
+        let id: [u8; 32] = flat_id[i * 32..(i + 1) * 32]
+            .try_into()
+            .expect("Failed to construct ID from flat_id");
         hnsw.insert(id, vec, vec![], level).ok();
     }
+    pg_bar.finish_and_clear();
 
     IndexStorage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
         .expect("Failed to cache index to disk");
