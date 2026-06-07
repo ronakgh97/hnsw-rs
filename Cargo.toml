@@ -1,13 +1,14 @@
 [package]
 name = "hnsw_rs"
-version = "0.1.0"
+version = "1.0.0-alpha.1"
 edition = "2024"
-authors = ["ronakgh97@gmail.com"]
+authors = ["ronakgh {ronakgh97@gmail.com}"]
 description = "A Simple implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
 license = "MIT"
-repository = "https:/github.com/ronakgh97/hnsw-rs"
-homepage = "https:/github.com/ronakgh97/hnsw-rs"
-documentation = "https:/github.com/ronakgh97/hnsw-rs/master/README.md"
+repository = "https://github.com/ronakgh97/hnsw-rs"
+readme = "README.md"
+categories = ["search", "data-structures", "algorithms", "machine-learning"]
+keywords = ["hnsw", "nearest-neighbor", "search", "proxy-graph", "simd"]
 
 [lib]
 name = "hnsw_rs"

@@ -125,7 +125,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///
 /// Algorithm highlights:
 /// **Insert**: Search from top layer down, connect at each layer bidirectionally
-/// **Search**: Greedy descent through upper layers, bounded search at bottom layer
+/// **Search**: Greedy descent through upper layers, bounded knn-search at bottom layer
 /// **Pruning**: Keep only M closest neighbors per node per layer
 /// **Tombstones**: Mark deleted nodes and skip during search, periodic cleanup & reindexing
 ///
@@ -148,7 +148,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///        let mut id = [0u8; 32];
 ///        fastrand::fill(&mut id); // 256-bit random [u8; 32]
 ///        let level_asg = hnsw.get_random_level(); // compute mL from M
-///        let metadata = vec![]; // metadata can be anything (std vec)
+///        let metadata = vec![]; // metadata can be anything (std vec<u8>)
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
@@ -270,7 +270,7 @@ impl HNSW {
     #[inline(always)]
     fn get_vector_slice(&self, idx: NodeIndex) -> &[f32] {
         let start = idx * self.dim;
-        &self.flat_vectors[start..start + self.dim]
+        unsafe { self.flat_vectors.get_unchecked(start..start + self.dim) }
     }
 
     /// Generates a random level for a new node based on an exponential distribution uses the HNSW paper formula:
@@ -534,7 +534,7 @@ impl HNSW {
 
         let mut working: Vec<(NodeIndex, f32)> = candidates.to_vec();
 
-        // TODO; this is bit unclear
+        // TODO; this is bit unclear with paper
 
         // Optionally extend candidates with neighbors of candidates (paper Alg. 4 lines 3-7)
         if self.extend_candidates {
@@ -725,7 +725,7 @@ impl HNSW {
         // Sort by similarity descending (best first)
         neighbor_sims.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
 
-        // Apply the paper's heuristic (Algorithm 4) for diversity-aware selection
+        // do it again here since selection is based on pruned sims, not original sims
         let new_neighbors = self.select_neighbors_heuristic(node_id, &neighbor_sims, max_n, layer);
         let new_neighbors_set: HashSet<NodeIndex> = new_neighbors.iter().copied().collect();
 
@@ -746,7 +746,7 @@ impl HNSW {
     }
 
     /// Returns the max number of neighbors for a given layer.
-    /// Layer 0 uses M0 = 2*M per the HNSW paper (Section 4.1).
+    /// Layer 0 uses M0 = 2*M per the paper (Section 4.1).
     #[inline(always)]
     fn max_neighbors_for_layer(&self, layer: usize) -> usize {
         if layer == 0 {
@@ -773,7 +773,7 @@ impl HNSW {
     /// (this is done in `insert`, `search_kernel`, and `brute_search*`).
     /// When that's true, cosine similarity reduces to a raw dot product (~3x faster than the
     /// `cosine_similarity` SIMD path that recomputes the norms).
-    #[inline]
+    #[inline(always)]
     fn similarity(&self, a: &[f32], b: &[f32], metrics: &Metrics) -> f32 {
         unsafe {
             match metrics {
@@ -1136,38 +1136,49 @@ impl HNSW {
         }
     }
 
-    // TODO; complete this
+    // TODO; imp/complete this
     /// Debug method to print summary of the graph, including entry point info and layer distribution, quality
     /// Optionally takes a NodeUUID for deep recursively insight.
     pub fn debug(&self, _uuid: Option<&[u8; 32]>) {
-        println!("Total nodes: {}", self.nodes.len());
+        println!("Layer distribution:");
+        for layer in 0..=self.max_layers {
+            let count = self.get_nodes_at_level(layer).len();
+            if count > 0 {
+                println!(
+                    "-L{}: {} nodes ({}%)",
+                    layer,
+                    count,
+                    if self.nodes.is_empty() {
+                        0.0
+                    } else {
+                        (count as f32 / self.nodes.len() as f32) * 100.0
+                    }
+                );
+            }
+        }
+        println!();
+
         if let Some(ep_idx) = self.entry_point
             && let Some(ep) = self.nodes.get(ep_idx)
         {
             println!(
-                "Entry point UUID/Index: {}/{} (max_level {})",
-                hex::encode(ep.uuid),
+                "Entry point: uuid={} idx={} max_level={}",
+                &hex::encode(ep.uuid),
                 ep_idx,
                 ep.max_level
             );
+            for (level, neighbour) in ep.neighbors.iter().enumerate() {
+                println!(
+                    "-L{} count={} neightbour_idx={:?}",
+                    level,
+                    neighbour.len(),
+                    neighbour
+                );
+            }
         } else {
             println!("No entry point");
         }
-
-        println!("Layer distribution:");
-        for layer in 0..=self.max_layers {
-            let count = self.get_nodes_at_level(layer).len();
-            println!(
-                "-L{}: {} nodes ({:.4}%)",
-                layer,
-                count,
-                if !self.nodes.is_empty() {
-                    (count as f32 / self.nodes.len() as f32) * 100.0
-                } else {
-                    0.0
-                }
-            );
-        }
+        println!();
     }
 }
 

@@ -15,6 +15,8 @@ const INDEX_CACHE: &str = "./bench/bench_index.bin";
 enum BenchMetrics {
     QRSVaryingEF,
     RecallVaryingK,
+    BuildTimeVaryingM,
+    RecallVaryingM,
 }
 
 struct BenchmarkResult {
@@ -133,6 +135,47 @@ fn main() -> Result<()> {
                 x_y: results.clone(),
             });
         }
+
+        // Build time and recall varying M
+        {
+            let sample_count = 65536;
+            let m_values = vec![8, 16, 32, 48, 64];
+            let mut build_results = Vec::new();
+            let mut recall_results = Vec::new();
+            let recall_sample = 1024;
+            let k = 32;
+            let ef = 128;
+            let mut rng2 = fastrand::Rng::new();
+            let queries_idx_m: Vec<_> = (0..recall_sample)
+                .map(|_| rng2.usize(0..sample_count))
+                .collect();
+
+            for &m in &m_values {
+                let (hnsw, elapsed) = build_index_with_m(m, sample_count, dim, &mut mmap);
+                println!("Build with M={}, time: {:?}", m, elapsed);
+                build_results.push((m as f64, elapsed.as_secs_f64()));
+
+                let mut total_recall = 0.0f32;
+                for &query_idx in &queries_idx_m {
+                    let query_vec = get_vector(&mut mmap, query_idx, dim);
+                    let hnsw_search = hnsw.search(query_vec, k, Some(ef));
+                    let brute_search = hnsw.brute_search(query_vec, k);
+                    total_recall += compare_recall_at_k(&hnsw_search, &brute_search, k);
+                }
+                let avg_recall = total_recall / recall_sample as f32;
+                println!("Recall@{} with M={}: {:.4}", k, m, avg_recall);
+                recall_results.push((m as f64, avg_recall as f64));
+            }
+
+            bench_results.push(BenchmarkResult {
+                metrics: BenchMetrics::BuildTimeVaryingM,
+                x_y: build_results,
+            });
+            bench_results.push(BenchmarkResult {
+                metrics: BenchMetrics::RecallVaryingM,
+                x_y: recall_results,
+            });
+        }
     }
 
     plot_bench(bench_results, PathBuf::from("./bench/plot.png"))?;
@@ -227,7 +270,7 @@ fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
     Ok(())
 }
 
-#[inline]
+#[inline(always)]
 /// Calculate Recall@K - what fraction of HNSW results are in the true top-k (brute force)
 fn compare_recall_at_k(
     hnsw_results: &[(NodeUUID, f32)],
@@ -271,14 +314,41 @@ fn load_vectors_mmap(path: PathBuf) -> (usize, usize, MmapMut) {
     (num_vectors, dim, mmap)
 }
 
+fn build_index_with_m(
+    m: usize,
+    num_vectors: usize,
+    dim: usize,
+    mmap: &mut MmapMut,
+) -> (HNSW, std::time::Duration) {
+    let mut hnsw = HNSW::new(
+        m,
+        96,
+        18,
+        1.0 / (m as f32).ln(),
+        Some(Metrics::Cosine),
+        num_vectors,
+        true,
+    );
+
+    let time = Instant::now();
+    for i in 0..num_vectors {
+        let vec = get_vector(mmap, i, dim);
+        let level = hnsw.get_random_level();
+        let mut id = [0u8; 32];
+        fastrand::fill(&mut id);
+        hnsw.insert(id, vec, vec![], level).ok();
+    }
+    (hnsw, time.elapsed())
+}
+
 fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
     println!("Building index with {} vectors...", num_vectors);
 
     let mut hnsw = HNSW::new(
-        32,
-        256,
+        16,
+        96,
         18,
-        1.0 / 32.0_f32.ln(),
+        1.0 / 16.0_f32.ln(),
         Some(Metrics::Cosine),
         num_vectors,
         true,
@@ -321,6 +391,10 @@ fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Resul
             Some(BenchmarkResult { metrics, .. }) => match metrics {
                 BenchMetrics::QRSVaryingEF => ("EF", "QPS", RED, "Search Varying EF"),
                 BenchMetrics::RecallVaryingK => ("K", "Recall@K", BLUE, "Recall Varying K"),
+                BenchMetrics::BuildTimeVaryingM => {
+                    ("M", "Build Time (s)", GREEN, "Build Time vs M")
+                }
+                BenchMetrics::RecallVaryingM => ("M", "Recall@K", YELLOW, "Recall vs M"),
             },
             None => ("X", "Y", GREEN, "N/A"),
         };

@@ -7,14 +7,14 @@
 //! ```rust
 //! use hnsw_rs::hnsw::*;
 //! fn main() {
-//!     let hnsw = HNSW::default();
+//!     let mut hnsw = HNSW::default();
 //!
 //!     // fill with rand 1024 vec, 3 dim for testing
 //!     hnsw.fast_fill(1024, 3).unwrap();
 //!
 //!     // perform search for 10 nearest neighbors
-//!     let query = vec![0.5, 0.5, 0.5];
-//!     let results = hnsw.search(&query, 10, None);
+//!     let mut query = vec![0.5, 0.5, 0.5];
+//!     let results = hnsw.search(&mut query, 10, None);
 //!     println!("Top 10 results: {:#?}", results);
 //!     assert_eq!(results.len(), 10);
 //! }
@@ -68,7 +68,12 @@ fn lib_hnsw_test() {
     println!("Inserted: 3072");
     hnsw.fast_fill(1024, 128).unwrap();
     println!("Inserted: 4096");
-    assert_eq!(hnsw.size(), 4096);
+    hnsw.fast_fill(1024, 128).unwrap();
+    println!("Inserted: 5120");
+    hnsw.fast_fill(1024, 128).unwrap();
+    println!("Inserted: 6144");
+    assert_eq!(hnsw.size(), 6144);
     println!("Mem-size: {} bytes", hnsw.mem_size());
-    hnsw.debug(None);
+    let node = hnsw.get_node_by_index(1024).unwrap().uuid;
+    hnsw.debug(Some(&node));
 }

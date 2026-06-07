@@ -15,24 +15,36 @@ cargo run --bench bench  -- ../../datasets/dim1536_size1M 4
 ```
 
 ```shell
-# config; max_n: 32, ef_const: 256, max_l: 32, metrics: cosine
-Total vectors: 153848 dimension: 1536
+# config; max_n: 16, ef_const: 96, max_l: 18, metrics: cosine
+Total vectors: 153848, dimension: 1536
 Building index with 153848 vectors...
-Index built in 540.5682286s and cached to disk.
+Index built in 192.7884992s and cached to disk.
 
-Search with ef: 32 took, QPS: 1706.59
-Search with ef: 64 took, QPS: 1032.82
-Search with ef: 128 took, QPS: 616.87
-Search with ef: 256 took, QPS: 364.37
-Search with ef: 512 took, QPS: 210.39
-Search with ef: 768 took, QPS: 155.18
+Search with ef: 32 took, QPS: 2858.56
+Search with ef: 64 took, QPS: 1806.46
+Search with ef: 128 took, QPS: 1082.76
+Search with ef: 256 took, QPS: 636.78
+Search with ef: 512 took, QPS: 367.97
+Search with ef: 768 took, QPS: 264.41
 
-Recall@12: 0.9985, Time: 32.774128
-Recall@24: 0.9989, Time: 33.136284
-Recall@48: 0.9990, Time: 35.135895
-Recall@96: 0.9993, Time: 36.384808
-Recall@192: 0.9996, Time: 38.89311
-Recall@384: 0.9997, Time: 42.66928
+Recall@12: 0.9784, Time: 33.53304
+Recall@24: 0.9865, Time: 33.891148
+Recall@48: 0.9905, Time: 34.027683
+Recall@96: 0.9942, Time: 35.76142
+Recall@192: 0.9957, Time: 36.853363
+Recall@384: 0.9972, Time: 39.917393
+
+# same config varyingM, sample_size: 65536
+Build with M=8, time: 31.1000744s
+Recall@32 with M=8: 0.9653
+Build with M=16, time: 57.0895427s
+Recall@32 with M=16: 0.9881
+Build with M=32, time: 57.315268s
+Recall@32 with M=32: 0.9921
+Build with M=48, time: 53.3230103s
+Recall@32 with M=48: 0.9936
+Build with M=64, time: 56.4618391s
+Recall@32 with M=64: 0.9934
 ```
 
 ![Bench plot](bench/plot.png)
