@@ -132,14 +132,14 @@ fn main() -> Result<()> {
             }
             bench_results.push(BenchmarkResult {
                 metrics: BenchMetrics::RecallVaryingK,
-                x_y: results.clone(),
+                x_y: results,
             });
         }
 
         // Build time and recall varying M
         {
-            let sample_count = 65536;
-            let m_values = vec![8, 16, 32, 48, 64];
+            let sample_count = 32540;
+            let m_values = vec![8, 16, 32, 48, 64, 96];
             let mut build_results = Vec::new();
             let mut recall_results = Vec::new();
             let recall_sample = 1024;

@@ -20,6 +20,10 @@
 //! }
 //! ```
 //!
+//! ## Benchmarks
+//!
+//! ![Bench Graph](https://raw.githubusercontent.com/ronakgh97/hnsw-rs/refs/heads/master/bench/plot.png)
+//!
 //! ## Features
 //!
 //! - **Wincode Support**: Makes serialization/deserialization efficient and compact for disk-storage

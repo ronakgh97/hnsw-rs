@@ -294,7 +294,7 @@ pub fn matmul(
 
 // TODO: write this using _mm256 for arm & x86_64, ditch `wide` crate
 
-/// In-place matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
+/// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
 /// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]

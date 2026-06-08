@@ -6,6 +6,8 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use wincode::{SchemaRead, SchemaWrite};
 
+// TODO; separate metadata storage from graph logic
+
 /// Simple bitset backed for tracking visited nodes during graph traversal instead of `HashSet`.
 struct BitSet {
     bits: Vec<u64>,
@@ -473,6 +475,7 @@ impl HNSW {
 
     /// Greedy search: find single closest node at a layer, used for navigating upper layers quickly
     /// `ALGORITHM 2 from paper suggestion`
+    #[inline]
     fn search_layer_greedy(&self, query: &[f32], entry: NodeIndex, layer: usize) -> NodeIndex {
         let mut current = entry;
         let mut current_sim = self.similarity(query, self.get_vector_slice(current), &self.metrics);
@@ -619,6 +622,7 @@ impl HNSW {
     ///
     /// COMPLEXITY: O(log n) per operation instead of O(n log n)
     /// Takes `&mut SearchScratch` to reuse allocations across calls.
+    #[inline]
     fn search_layer_knn(
         &self,
         query: &[f32],
@@ -852,7 +856,6 @@ impl HNSW {
             .collect()
     }
 
-    #[inline]
     /// Search and return results with metadata, similiar to [search](HNSW::search), but collects metadata on return
     /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
     pub fn search_metadata(
@@ -872,6 +875,7 @@ impl HNSW {
 
     /// Internal helper: loop that grows `ef` until we have `k` non-tombstoned results and the
     /// kth similarity "stabilizes" (or we hit `max_ef`).
+    #[inline(always)]
     fn search_helper(
         &self,
         query: &mut [f32],
@@ -919,9 +923,9 @@ impl HNSW {
         }
     }
 
-    #[inline]
     /// Brute-force parallel search for testing and validation.
     /// Returns similar to [`search`](HNSW::search)
+    #[inline]
     pub fn brute_search(&self, query: &mut [f32], k: usize) -> Vec<(NodeUUID, f32)> {
         use rayon::iter::*;
         let dim = self.dim;
@@ -946,9 +950,9 @@ impl HNSW {
         results
     }
 
-    #[inline]
     /// Brute-force search with metadata included in results.
     /// Returns similiar to [`search_with_metadata`](HNSW::search_metadata)
+    #[inline]
     pub fn brute_search_metadata(
         &self,
         query: &mut [f32],

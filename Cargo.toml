@@ -1,9 +1,9 @@
 [package]
-name = "hnsw_rs"
+name = "tiny-hnsw"
 version = "1.0.0-alpha.1"
 edition = "2024"
 authors = ["ronakgh {ronakgh97@gmail.com}"]
-description = "A Simple implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
+description = "A simplfied implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
 license = "MIT"
 repository = "https://github.com/ronakgh97/hnsw-rs"
 readme = "README.md"
