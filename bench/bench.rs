@@ -17,6 +17,8 @@ enum BenchMetrics {
     RecallVaryingK,
     BuildTimeVaryingM,
     RecallVaryingM,
+    BuildTimeVaryingMHeuristic,
+    RecallVaryingMHeuristic,
 }
 
 struct BenchmarkResult {
@@ -136,8 +138,9 @@ fn main() -> Result<()> {
             });
         }
 
-        // Build time and recall varying M
+        // Build time and recall varying M (Alg. 3 simple, paper default)
         {
+            println!("Simple selection");
             let sample_count = 32540;
             let m_values = vec![8, 16, 32, 48, 64, 96];
             let mut build_results = Vec::new();
@@ -162,6 +165,7 @@ fn main() -> Result<()> {
                     let brute_search = hnsw.brute_search(query_vec, k);
                     total_recall += compare_recall_at_k(&hnsw_search, &brute_search, k);
                 }
+
                 let avg_recall = total_recall / recall_sample as f32;
                 println!("Recall@{} with M={}: {:.4}", k, m, avg_recall);
                 recall_results.push((m as f64, avg_recall as f64));
@@ -173,6 +177,49 @@ fn main() -> Result<()> {
             });
             bench_results.push(BenchmarkResult {
                 metrics: BenchMetrics::RecallVaryingM,
+                x_y: recall_results,
+            });
+        }
+
+        // Build time and recall varying M (Alg. 4 heuristic)
+        {
+            println!("Heuristic selection");
+            let sample_count = 32540;
+            let m_values = vec![8, 16, 32, 48, 64, 96];
+            let mut build_results = Vec::new();
+            let mut recall_results = Vec::new();
+            let recall_sample = 1024;
+            let k = 32;
+            let ef = 128;
+            let mut rng2 = fastrand::Rng::new();
+            let queries_idx_m: Vec<_> = (0..recall_sample)
+                .map(|_| rng2.usize(0..sample_count))
+                .collect();
+
+            for &m in &m_values {
+                let (hnsw, elapsed) = build_index_with_m_heuristic(m, sample_count, dim, &mut mmap);
+                println!("Build with M={}, time: {:?}", m, elapsed);
+                build_results.push((m as f64, elapsed.as_secs_f64()));
+
+                let mut total_recall = 0.0f32;
+                for &query_idx in &queries_idx_m {
+                    let query_vec = get_vector(&mut mmap, query_idx, dim);
+                    let hnsw_search = hnsw.search(query_vec, k, Some(ef));
+                    let brute_search = hnsw.brute_search(query_vec, k);
+                    total_recall += compare_recall_at_k(&hnsw_search, &brute_search, k);
+                }
+
+                let avg_recall = total_recall / recall_sample as f32;
+                println!("Recall@{} with M={}: {:.4}", k, m, avg_recall);
+                recall_results.push((m as f64, avg_recall as f64));
+            }
+
+            bench_results.push(BenchmarkResult {
+                metrics: BenchMetrics::BuildTimeVaryingMHeuristic,
+                x_y: build_results,
+            });
+            bench_results.push(BenchmarkResult {
+                metrics: BenchMetrics::RecallVaryingMHeuristic,
                 x_y: recall_results,
             });
         }
@@ -320,13 +367,48 @@ fn build_index_with_m(
     dim: usize,
     mmap: &mut MmapMut,
 ) -> (HNSW, std::time::Duration) {
-    let mut hnsw = HNSW::new(
+    let ef_const = 96.max(2 * m);
+    let mut hnsw = HNSW::with_options(
         m,
-        96,
+        ef_const,
         18,
         1.0 / (m as f32).ln(),
         Some(Metrics::Cosine),
         num_vectors,
+        false,
+        false,
+        true,
+        false,
+    );
+
+    let time = Instant::now();
+    for i in 0..num_vectors {
+        let vec = get_vector(mmap, i, dim);
+        let level = hnsw.get_random_level();
+        let mut id = [0u8; 32];
+        fastrand::fill(&mut id);
+        hnsw.insert(id, vec, vec![], level).ok();
+    }
+    (hnsw, time.elapsed())
+}
+
+fn build_index_with_m_heuristic(
+    m: usize,
+    num_vectors: usize,
+    dim: usize,
+    mmap: &mut MmapMut,
+) -> (HNSW, std::time::Duration) {
+    let ef_const = 96.max(2 * m);
+    let mut hnsw = HNSW::with_options(
+        m,
+        ef_const,
+        18,
+        1.0 / (m as f32).ln(),
+        Some(Metrics::Cosine),
+        num_vectors,
+        false,
+        false,
+        true,
         true,
     );
 
@@ -351,6 +433,7 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
         1.0 / 16.0_f32.ln(),
         Some(Metrics::Cosine),
         num_vectors,
+        true,
         true,
     );
 
@@ -381,20 +464,37 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
 fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Result<()> {
     use plotters::prelude::*;
 
-    let root = BitMapBackend::new(&output, (1200, 900)).into_drawing_area();
+    let root = BitMapBackend::new(&output, (1800, 1200)).into_drawing_area();
     root.fill(&BLACK)?;
 
-    let chart_area = root.split_evenly((2, 2)).into_iter().enumerate();
+    let chart_area = root.split_evenly((3, 2)).into_iter().enumerate();
 
     for (idx, area) in chart_area {
         let (_x_label, _y_label, color, label) = match benchmark_results.get(idx) {
             Some(BenchmarkResult { metrics, .. }) => match metrics {
                 BenchMetrics::QRSVaryingEF => ("EF", "QPS", RED, "Search Varying EF"),
                 BenchMetrics::RecallVaryingK => ("K", "Recall@K", BLUE, "Recall Varying K"),
-                BenchMetrics::BuildTimeVaryingM => {
-                    ("M", "Build Time (s)", GREEN, "Build Time vs M")
+                BenchMetrics::BuildTimeVaryingM => (
+                    "M",
+                    "Build Time (s)",
+                    GREEN,
+                    "Build Time vs M (Simple selection)",
+                ),
+                BenchMetrics::RecallVaryingM => {
+                    ("M", "Recall@K", YELLOW, "Recall vs M (Simple selection)")
                 }
-                BenchMetrics::RecallVaryingM => ("M", "Recall@K", YELLOW, "Recall vs M"),
+                BenchMetrics::BuildTimeVaryingMHeuristic => (
+                    "M",
+                    "Build Time (s)",
+                    CYAN,
+                    "Build Time vs M (Heuristic selection)",
+                ),
+                BenchMetrics::RecallVaryingMHeuristic => (
+                    "M",
+                    "Recall@K",
+                    MAGENTA,
+                    "Recall vs M (Heuristic selection)",
+                ),
             },
             None => ("X", "Y", GREEN, "N/A"),
         };

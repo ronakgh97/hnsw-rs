@@ -99,7 +99,7 @@ fn test_hnsw_search_with_different_metrics() {
     ];
 
     for (metric, mut query) in test_cases {
-        let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(metric), 1000, true);
+        let mut hnsw = HNSW::new(16, 64, 4, 1.0, Some(metric), 1000, true, false);
         let mut vectors = [
             vec![1.0, 0.0, 0.0],
             vec![0.0, 1.0, 0.0],
@@ -191,4 +191,26 @@ fn test_hnsw_with_large_vectors() {
     let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 50, 512, 8);
 
     assert_eq!(hnsw.search(&mut vectors[25], 10, None).len(), 10);
+}
+
+#[test]
+fn test_hnsw_simple_selection_opt_in() {
+    let mut hnsw = HNSW::with_options(
+        16, // max_neighbors
+        96, // ef_construction
+        18, // max_layers
+        1.0 / 16.0_f32.ln(),
+        Some(Metrics::Cosine),
+        1000,
+        false, // extend_candidates
+        false, // keep_pruned_connections
+        true,  // use_simple_greedy_upper_layer
+        false, // use_simple_selection = Alg. 3
+    );
+
+    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 100, 32, 42);
+
+    // Search should work correctly with Alg. 3
+    let results = hnsw.search(&mut vectors[50], 10, Some(64));
+    assert_eq!(results.len(), 10);
 }

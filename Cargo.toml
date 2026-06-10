@@ -1,13 +1,13 @@
 [package]
 name = "tiny-hnsw"
-version = "1.0.0-alpha.1"
+version = "1.0.0-alpha.2"
 edition = "2024"
 authors = ["ronakgh {ronakgh97@gmail.com}"]
 description = "A simplfied implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
 license = "MIT"
 repository = "https://github.com/ronakgh97/hnsw-rs"
 readme = "README.md"
-categories = ["search", "data-structures", "algorithms", "machine-learning"]
+categories = ["data-structures", "mathematics", "algorithms", "science"]
 keywords = ["hnsw", "nearest-neighbor", "search", "proxy-graph", "simd"]
 
 [lib]
@@ -47,6 +47,6 @@ fastrand = "2.4.1"
 
 [dev-dependencies]
 indicatif = "0.18.4"
-arrow = "58.3.0"
-parquet = "58.3.0"
+arrow = "59.0.0"
+parquet = "59.0.0"
 plotters = "0.3.7"

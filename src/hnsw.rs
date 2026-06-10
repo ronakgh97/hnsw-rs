@@ -188,6 +188,9 @@ pub struct HNSW {
     /// (paper Alg. 5, ef=1: "avoid introduction of additional parameters").
     /// If false, the upper-layer pass uses `search_layer_knn` with ef=1 (BFS).
     use_simple_greedy_upper_layer: bool,
+    /// If true, neighbor selection uses Alg. 4 (heuristic for diversity).
+    /// If false (paper default), uses Alg. 3 (simple top-M by similarity).
+    use_heuristic_selection: bool,
     /// Similarity metric to use for distance calculations (default: Cosine)
     metrics: Metrics,
     /// Mapping from node uuid to array index
@@ -196,11 +199,12 @@ pub struct HNSW {
 
 impl Default for HNSW {
     /// Default Config: max_neighbors=16, ef_construction=256, max_layers=18, distribution_bias=1/ln(16),
-    /// Cosine similarity, pre-allocate for 512k nodes, and use simple greedy search for upper layers.
+    /// Cosine similarity, with_capacity for 512k nodes, and use simple greedy search for upper layers.
+    /// `use_heuristic_selection` defaults to true (Alg. 3 simple selection, paper default).
     fn default() -> Self {
         let m = 16;
         let ml = 1.0 / (m as f32).ln();
-        HNSW::new(m, 256, 18, ml, Some(Metrics::Cosine), 512_000, true)
+        HNSW::new(m, 256, 18, ml, Some(Metrics::Cosine), 512_000, true, true)
     }
 }
 
@@ -209,17 +213,19 @@ impl HNSW {
     /// `distribution_bias` is the level norm factor `mL` (paper 4.1, default is 1/ln(16) ≈ 0.36, where 16 is M).
     /// `use_simple_greedy_upper_layer` toggles between the paper's "simple greedy search" (true, default)
     /// and `search_layer_knn` with ef=1 (false) for the upper-layer pass.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         max_neighbors: usize,
         ef_construction: usize,
         max_layers: usize,
         distribution_bias: f32,
         metrics: Option<Metrics>,
-        pre_allocate: usize,
+        with_capacity: usize,
         use_simple_greedy_upper_layer: bool,
+        use_heuristic_selection: bool,
     ) -> Self {
         HNSW {
-            nodes: Vec::with_capacity(pre_allocate),
+            nodes: Vec::with_capacity(with_capacity),
             flat_vectors: Vec::new(),
             dim: 0,
             entry_point: None,
@@ -230,15 +236,16 @@ impl HNSW {
             extend_candidates: false,
             keep_pruned_connections: false,
             use_simple_greedy_upper_layer,
+            use_heuristic_selection,
             metrics: metrics.unwrap_or(Metrics::Cosine),
-            id_mapper: HashMap::with_capacity(pre_allocate),
+            id_mapper: HashMap::with_capacity(with_capacity),
         }
     }
 
     /// Creates a new HNSW instance with options over paper Alg. 4 flags.
-    /// `extend_candidates` and `keep_pruned_connections` correspond to Alg. 4's `extendCandidates` and `keepPrunedConnections` parameters.
-    /// `use_simple_greedy_upper_layer` toggles between the paper's "simple greedy search" (true)
-    /// and `search_layer_knn` with ef=1 (false) for the upper-layer pass.
+    /// `extend_candidates` and `keep_pruned_connections` correspond to Alg. 4's `extendCandidates` and `keepPrunedConnections` parameters, for high clustered data and fixed neighbor counts respectively.
+    /// `use_simple_greedy_upper_layer` toggles between the paper's "simple greedy search" (true) and `search_layer_knn` with ef=1 (false) for the upper-layer pass.
+    /// `use_heuristic_selection` enables Alg. 4 (heuristic) for neighbor selection; false = Alg. 3 (simple, paper default).
     #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         max_neighbors: usize,
@@ -246,13 +253,14 @@ impl HNSW {
         max_layers: usize,
         distribution_bias: f32,
         metrics: Option<Metrics>,
-        pre_allocate: usize,
+        with_capacity: usize,
         extend_candidates: bool,
         keep_pruned_connections: bool,
         use_simple_greedy_upper_layer: bool,
+        use_heuristic_selection: bool,
     ) -> Self {
         HNSW {
-            nodes: Vec::with_capacity(pre_allocate),
+            nodes: Vec::with_capacity(with_capacity),
             flat_vectors: Vec::new(),
             dim: 0,
             entry_point: None,
@@ -263,8 +271,9 @@ impl HNSW {
             extend_candidates,
             keep_pruned_connections,
             use_simple_greedy_upper_layer,
+            use_heuristic_selection,
             metrics: metrics.unwrap_or(Metrics::Cosine),
-            id_mapper: HashMap::with_capacity(pre_allocate),
+            id_mapper: HashMap::with_capacity(with_capacity),
         }
     }
 
@@ -392,7 +401,7 @@ impl HNSW {
 
         self.nodes.push(node);
 
-        // Start search from entry point
+        // start search from entry point
         let mut current_nearest = self.entry_point.expect("Entry point is NONE");
         let entry_level = self.nodes[current_nearest].max_level;
 
@@ -411,7 +420,7 @@ impl HNSW {
             } else if let Some((nearest_id, _)) = self
                 .search_layer_knn(
                     self.get_vector_slice(node_id),
-                    current_nearest,
+                    &[current_nearest],
                     1,
                     layer,
                     &mut scratch,
@@ -429,14 +438,14 @@ impl HNSW {
             // Find ef_construction nearest neighbors at this layer
             let candidates = self.search_layer_knn(
                 self.get_vector_slice(node_id),
-                current_nearest,
+                &[current_nearest],
                 self.ef_const,
                 layer,
                 &mut scratch,
             );
 
-            // Apply heuristic (Algorithm 4) for diversity-aware neighbor selection
-            let selected = self.select_neighbors_heuristic(node_id, &candidates, max_n, layer);
+            // Apply neighbor selection (Alg. 3 simple or Alg. 4 heuristic)
+            let selected = self.select_neighbors_dispatch(node_id, &candidates, max_n, layer);
 
             // Connect new node to its neighbors (bidirectional)
             for &neighbor_id in &selected {
@@ -502,22 +511,21 @@ impl HNSW {
         current
     }
 
-    // /// Selects the closest neighbors directly without applying any diversity heuristic.
-    // /// Just takes the top K the closest candidates.
-    // /// `ALGORITHM 3 from the paper`.
-    // #[allow(unused)]
-    // #[inline]
-    // fn select_neighbors_simple(
-    //     &self,
-    //     candidates: &[(NodeIndex, f32)],
-    //     max_results: usize,
-    // ) -> Vec<NodeIndex> {
-    //     candidates
-    //         .iter()
-    //         .take(max_results)
-    //         .map(|&(id, _)| id)
-    //         .collect()
-    // }
+    /// Selects the closest neighbors directly without applying any diversity heuristic.
+    /// Just takes the top K the closest candidates.
+    /// `ALGORITHM 3 from the paper`.
+    #[inline]
+    fn select_neighbors_simple(
+        &self,
+        candidates: &[(NodeIndex, f32)],
+        max_results: usize,
+    ) -> Vec<NodeIndex> {
+        candidates
+            .iter()
+            .take(max_results)
+            .map(|&(id, _)| id)
+            .collect()
+    }
 
     /// Iterates candidates sorted by similarity. For each candidate,
     /// checks if it's "redundant" — i.e., closer to an already-selected neighbor
@@ -608,6 +616,21 @@ impl HNSW {
         result
     }
 
+    #[inline(always)]
+    fn select_neighbors_dispatch(
+        &self,
+        query_id: NodeIndex,
+        candidates: &[(NodeIndex, f32)],
+        max_results: usize,
+        layer: usize,
+    ) -> Vec<NodeIndex> {
+        if self.use_heuristic_selection {
+            self.select_neighbors_heuristic(query_id, candidates, max_results, layer)
+        } else {
+            self.select_neighbors_simple(candidates, max_results)
+        }
+    }
+
     /// K-NN search at a specific layer: find K nearest neighbors
     /// Uses a BOUNDED search with ef parameter (critical for performance)
     ///
@@ -626,7 +649,7 @@ impl HNSW {
     fn search_layer_knn(
         &self,
         query: &[f32],
-        entry: NodeIndex,
+        entries: &[NodeIndex],
         ef: usize,
         layer: usize,
         scratch: &mut SearchScratch,
@@ -646,10 +669,14 @@ impl HNSW {
             scratch.results = BinaryHeap::with_capacity(ef);
         }
 
-        let entry_sim = self.similarity(query, self.get_vector_slice(entry), &self.metrics);
-        scratch.visited.insert(entry);
-        scratch.candidates.push(Candidate(entry, entry_sim));
-        scratch.results.push(ScoredResult(entry, entry_sim));
+        // TODO; multiple eps_entries?
+        // heaps with all entry points
+        for &entry in entries {
+            let entry_sim = self.similarity(query, self.get_vector_slice(entry), &self.metrics);
+            scratch.visited.insert(entry);
+            scratch.candidates.push(Candidate(entry, entry_sim));
+            scratch.results.push(ScoredResult(entry, entry_sim));
+        }
 
         while let Some(Candidate(current_id, current_sim)) = scratch.candidates.pop() {
             if let Some(worst_result) = scratch.results.peek()
@@ -729,8 +756,8 @@ impl HNSW {
         // Sort by similarity descending (best first)
         neighbor_sims.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
 
-        // do it again here since selection is based on pruned sims, not original sims
-        let new_neighbors = self.select_neighbors_heuristic(node_id, &neighbor_sims, max_n, layer);
+        // Do it again here since selection is based on pruned sims, not original sims
+        let new_neighbors = self.select_neighbors_dispatch(node_id, &neighbor_sims, max_n, layer);
         let new_neighbors_set: HashSet<NodeIndex> = new_neighbors.iter().copied().collect();
 
         let removed_neighbors: Vec<NodeIndex> = old_neighbors
@@ -825,7 +852,7 @@ impl HNSW {
             if self.use_simple_greedy_upper_layer {
                 current = self.search_layer_greedy(query, current, layer);
             } else if let Some((nearest_id, _)) = self
-                .search_layer_knn(query, current, 1, layer, &mut scratch)
+                .search_layer_knn(query, &[current], 1, layer, &mut scratch)
                 .first()
             {
                 current = *nearest_id;
@@ -835,7 +862,7 @@ impl HNSW {
         // search layer 0 thoroughly for K neighbors
         // `search_layer_knn` already returns sorted results
         // return full ef results, search() handles truncation after filtering tombstones
-        self.search_layer_knn(query, current, ef, 0, &mut scratch)
+        self.search_layer_knn(query, &[current], ef, 0, &mut scratch)
     }
 
     /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
