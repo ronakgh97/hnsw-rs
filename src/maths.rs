@@ -5,8 +5,7 @@ use wincode::{SchemaRead, SchemaWrite};
 /// Helper function to reduce a SIMD vector to a scalar by summing its elements
 #[inline(always)]
 fn from_f32x8(v: f32x8) -> f32 {
-    let a = v.to_array();
-    a[0] + a[1] + a[2] + a[3] + a[4] + a[5] + a[6] + a[7]
+    v.to_array().iter().sum()
 }
 
 /// Supported similarity metrics for vector search
@@ -48,9 +47,13 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     // process 32 elements per iteration (4 * 8-lane vectors)
     let chunks = a.len() / LANE;
-    let mut dot = f32x8::ZERO;
-    let mut norm_a = f32x8::ZERO;
-    let mut norm_b = f32x8::ZERO;
+
+    let mut dot0 = f32x8::ZERO;
+    let mut dot1 = f32x8::ZERO;
+    let mut na0 = f32x8::ZERO;
+    let mut na1 = f32x8::ZERO;
+    let mut nb0 = f32x8::ZERO;
+    let mut nb1 = f32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
@@ -78,27 +81,27 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
             let vb2 = f32x8::from(read_unaligned(vb2_ptr as *const [f32; 8]));
             let vb3 = f32x8::from(read_unaligned(vb3_ptr as *const [f32; 8]));
 
-            dot = va0.mul_add(vb0, dot);
-            dot = va1.mul_add(vb1, dot);
-            dot = va2.mul_add(vb2, dot);
-            dot = va3.mul_add(vb3, dot);
+            dot0 = va0.mul_add(vb0, dot0);
+            dot1 = va1.mul_add(vb1, dot1);
+            dot0 = va2.mul_add(vb2, dot0);
+            dot1 = va3.mul_add(vb3, dot1);
 
-            norm_a = va0.mul_add(va0, norm_a);
-            norm_a = va1.mul_add(va1, norm_a);
-            norm_a = va2.mul_add(va2, norm_a);
-            norm_a = va3.mul_add(va3, norm_a);
+            na0 = va0.mul_add(va0, na0);
+            na1 = va1.mul_add(va1, na1);
+            na0 = va2.mul_add(va2, na0);
+            na1 = va3.mul_add(va3, na1);
 
-            norm_b = vb0.mul_add(vb0, norm_b);
-            norm_b = vb1.mul_add(vb1, norm_b);
-            norm_b = vb2.mul_add(vb2, norm_b);
-            norm_b = vb3.mul_add(vb3, norm_b);
+            nb0 = vb0.mul_add(vb0, nb0);
+            nb1 = vb1.mul_add(vb1, nb1);
+            nb0 = vb2.mul_add(vb2, nb0);
+            nb1 = vb3.mul_add(vb3, nb1);
         }
     }
 
     // reduce scalars
-    let mut dot_sum = from_f32x8(dot);
-    let mut na_sum = from_f32x8(norm_a);
-    let mut nb_sum = from_f32x8(norm_b);
+    let mut dot_sum = from_f32x8(dot0 + dot1);
+    let mut na_sum = from_f32x8(na0 + na1);
+    let mut nb_sum = from_f32x8(nb0 + nb1);
 
     // handle remaining elements
     let remainder_start = chunks * LANE;
@@ -159,7 +162,11 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     const LANE: usize = 32;
 
     let chunks = a.len() / LANE;
-    let mut sum = f32x8::ZERO;
+
+    let mut sum0 = f32x8::ZERO;
+    let mut sum1 = f32x8::ZERO;
+    let mut sum2 = f32x8::ZERO;
+    let mut sum3 = f32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
@@ -187,15 +194,15 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
             let vb2 = f32x8::from(read_unaligned(vb2_ptr as *const [f32; 8]));
             let vb3 = f32x8::from(read_unaligned(vb3_ptr as *const [f32; 8]));
 
-            sum = va0.mul_add(vb0, sum);
-            sum = va1.mul_add(vb1, sum);
-            sum = va2.mul_add(vb2, sum);
-            sum = va3.mul_add(vb3, sum);
+            sum0 = va0.mul_add(vb0, sum0);
+            sum1 = va1.mul_add(vb1, sum1);
+            sum2 = va2.mul_add(vb2, sum2);
+            sum3 = va3.mul_add(vb3, sum3);
         }
     }
 
     // reduce scalar
-    let mut total_sum = from_f32x8(sum);
+    let mut total_sum = from_f32x8((sum0 + sum1) + (sum2 + sum3));
 
     // handle remainder
     let remainder_start = chunks * LANE;
@@ -213,7 +220,11 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     const LANE: usize = 32;
     let chunks = a.len() / LANE;
-    let mut sum_sq = f32x8::ZERO;
+
+    let mut sumsq0 = f32x8::ZERO;
+    let mut sumsq1 = f32x8::ZERO;
+    let mut sumsq2 = f32x8::ZERO;
+    let mut sumsq3 = f32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
@@ -246,15 +257,15 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
             let d2 = va2 - vb2;
             let d3 = va3 - vb3;
 
-            sum_sq = d0.mul_add(d0, sum_sq);
-            sum_sq = d1.mul_add(d1, sum_sq);
-            sum_sq = d2.mul_add(d2, sum_sq);
-            sum_sq = d3.mul_add(d3, sum_sq);
+            sumsq0 = d0.mul_add(d0, sumsq0);
+            sumsq1 = d1.mul_add(d1, sumsq1);
+            sumsq2 = d2.mul_add(d2, sumsq2);
+            sumsq3 = d3.mul_add(d3, sumsq3);
         }
     }
 
     // reduce to scalar
-    let mut dist = from_f32x8(sum_sq);
+    let mut dist = from_f32x8((sumsq0 + sumsq1) + (sumsq2 + sumsq3));
 
     // handle remainder
     let remainder_start = chunks * LANE;

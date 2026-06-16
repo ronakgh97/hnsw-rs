@@ -129,7 +129,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 /// **Insert**: Search from top layer down, connect at each layer bidirectionally
 /// **Search**: Greedy descent through upper layers, bounded knn-search at bottom layer
 /// **Pruning**: Keep only M closest neighbors per node per layer
-/// **Tombstones**: Mark deleted nodes and skip during search, periodic cleanup & reindexing
+/// **Tombstones**: Mark deleted nodes and ONLY skip during search end collection, periodic cleanup & reindexing
 ///
 ///```rust
 ///use hnsw_rs::prelude::*;
@@ -150,7 +150,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///        let mut id = [0u8; 32];
 ///        fastrand::fill(&mut id); // 256-bit random [u8; 32]
 ///        let level_asg = hnsw.get_random_level(); // compute mL from M
-///        let metadata = vec![]; // metadata can be anything (std vec<u8>)
+///        let metadata = vec![]; // metadata can be anything (std vec<u8> for now)
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
