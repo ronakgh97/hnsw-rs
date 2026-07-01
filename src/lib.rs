@@ -31,14 +31,6 @@
 //! - **SIMD Optimized**: Uses Portable SIMD instructions for fast vector computations
 //! - **Parallel Processing**: Uses Rayon for parallel operations where possible
 //!
-//! ## Modules
-//!
-//! - `prelude`: Re-exports commonly used types and functions
-//! - `hnsw`: Kernal HNSW implementation
-//! - `storage`: IO operations for saving/loading the HNSW index to/from disk
-//! - `maths`: Similarity metric functions
-//! - `utils`: Utility functions for testing and benchmarking
-//!
 //! ## References
 //!
 //! - <https://arxiv.org/pdf/1603.09320>

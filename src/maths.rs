@@ -277,7 +277,7 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     1.0 / (1.0 + dist.sqrt())
 }
 
-/// Multiply two matrices using 4 simd avx2 registers at a time, fallbacks if less, returning the resulting matrix
+/// Multiply two matrices using 4 SIMD avx2 registers at a time, fallbacks if less, returning the resulting matrix
 /// The matrices are expected to be in row-major order and the dimensions must match
 #[inline(always)]
 pub fn matmul(
@@ -304,7 +304,6 @@ pub fn matmul(
 }
 
 // TODO: write this using _mm256 for arm & x86_64, ditch `wide` crate
-
 /// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
 /// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
 #[inline(always)]

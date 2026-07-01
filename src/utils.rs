@@ -1,6 +1,7 @@
 /// Generates a random vector of given dimension with values in range `(-1.0, 1.0)`,
-/// still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality),
-/// returns a tuple of (generated vectors, final seed).
+/// still bad for similarity test due to high [dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality).
+///
+/// Returns a tuple of (newly generated vectors, final seed).
 #[inline]
 pub fn gen_vec(num: usize, dim: usize, base_seed: usize) -> (Vec<Vec<f32>>, usize) {
     let result: Vec<Vec<f32>> = (0..num)

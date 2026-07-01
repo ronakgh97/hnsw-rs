@@ -1,12 +1,11 @@
 use crate::maths::{Metrics, dot_product, euclidean_similarity, normalize_l2};
-use crate::prelude::gen_vec;
+use crate::utils::gen_vec;
 use ahash::{HashMap, HashMapExt, HashSet};
 use anyhow::Result;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use wincode::{SchemaRead, SchemaWrite};
-
-// TODO; separate metadata storage from graph logic
+// TODO; separate metadata storage from graph logic?
 
 /// Simple bitset backed for tracking visited nodes during graph traversal instead of `HashSet`.
 struct BitSet {
@@ -31,12 +30,19 @@ impl BitSet {
     /// Returns true if the bit was newly set (not already set).
     #[inline(always)]
     fn insert(&mut self, idx: usize) -> bool {
-        let word = idx / 64;
-        let bit = 1u64 << (idx % 64);
-        let chunk = &mut self.bits[word];
-        let was_set = (*chunk & bit) != 0;
-        *chunk |= bit;
-        !was_set
+        let word = idx >> 6;
+        let bit_idx = idx & 63;
+        let bit = 1u64 << bit_idx;
+
+        unsafe {
+            #[rustfmt::skip]
+            let chunk =
+                self.bits.get_unchecked_mut(word);
+
+            let old = *chunk;
+            *chunk = old | bit;
+            (old & bit) == 0
+        }
     }
 }
 
@@ -150,7 +156,7 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///        let mut id = [0u8; 32];
 ///        fastrand::fill(&mut id); // 256-bit random [u8; 32]
 ///        let level_asg = hnsw.get_random_level(); // compute mL from M
-///        let metadata = vec![]; // metadata can be anything (std vec<u8> for now)
+///        let metadata = vec![]; // metadata can be anything (std Vec<u8> for now)
 ///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
 ///    }
 ///
@@ -179,10 +185,10 @@ pub struct HNSW {
     /// Paper default is `1/ln(M)` where M is the max neighbors per layer (e.g. 0.36 for M=16).
     distribution_bias: f32,
     /// If true, `select_neighbors_heuristic` extends the candidate set with the neighbors of the
-    /// candidates (paper Alg. 4 lines 3-7). Useful for highly clustered data.
+    /// candidates (paper Alg. 4). Useful for highly clustered data.
     extend_candidates: bool,
     /// If true, `select_neighbors_heuristic` adds discarded candidates back to reach `max_results`
-    /// (paper Alg. 4 lines 15-17). Ensures fixed number of connections per element.
+    /// (paper Alg. 4). Ensures fixed number of connections per element.
     keep_pruned_connections: bool,
     /// If true (paper default), the upper-layer pass uses a simple greedy search
     /// (paper Alg. 5, ef=1: "avoid introduction of additional parameters").
@@ -209,6 +215,13 @@ impl Default for HNSW {
 }
 
 impl HNSW {
+    /// Returns a slice of the vector for the given node index, the core SoA accessor, all vector reads should go through here.
+    #[inline(always)]
+    fn get_vector_slice(&self, idx: NodeIndex) -> &[f32] {
+        let start = idx * self.dim;
+        unsafe { self.flat_vectors.get_unchecked(start..start + self.dim) }
+    }
+
     /// Creates a new HNSW instance with specified parameters.
     /// `distribution_bias` is the level norm factor `mL` (paper 4.1, default is 1/ln(16) ≈ 0.36, where 16 is M).
     /// `use_simple_greedy_upper_layer` toggles between the paper's "simple greedy search" (true, default)
@@ -277,13 +290,6 @@ impl HNSW {
         }
     }
 
-    /// Returns a slice of the vector for the given node index, the core SoA accessor — all vector reads should go through here.
-    #[inline(always)]
-    fn get_vector_slice(&self, idx: NodeIndex) -> &[f32] {
-        let start = idx * self.dim;
-        unsafe { self.flat_vectors.get_unchecked(start..start + self.dim) }
-    }
-
     /// Generates a random level for a new node based on an exponential distribution uses the HNSW paper formula:
     /// floor(-ln(<rand(0...1)>) * mL) where mL is the level norm factor stored in `distribution_bias` (paper default: 1/ln(M), e.g. 0.36 for M=16).
     /// Used this in [`insert`](HNSW::insert), or you may use your own distribution curve
@@ -293,17 +299,6 @@ impl HNSW {
         let level = (-r.ln() * self.distribution_bias).floor() as usize;
         level.min(self.max_layers - 1)
     }
-
-    // /// Same as [`insert`](HNSW::insert), but [`level assignments`](HNSW::get_random_level) internally
-    // pub fn insert_auto(
-    //     &mut self,
-    //     node_id: String,
-    //     vector: &[f32],
-    //     metadata: Vec<u8>,
-    // ) -> Result<NodeIndex> {
-    //     let level = self.get_random_level();
-    //     self.insert(node_id, vector, metadata, level)
-    // }
 
     /// EXPERIMENTAL: Fill the graph with random bullshit, good for testing and benchmarking,
     /// returns the final seed used for generation so result can reproduce the same data if needed
@@ -365,19 +360,7 @@ impl HNSW {
             self.dim = vector.len();
         }
 
-        // append vector to contiguous storage
-        // TODO; extend_from_slice clones, perf issue, need unsafe?
-        // let len = vector.len();
-        // if len > 0 {
-        //     let start = self.flat_vectors.len();
-        //     self.flat_vectors.reserve(len);
-        //     unsafe {
-        //         let dst = self.flat_vectors.as_mut_ptr().add(start);
-        //         std::ptr::copy_nonoverlapping(vector.as_ptr(), dst, len);
-        //         self.flat_vectors.set_len(start + len);
-        //     }
-        // }
-        //
+        // since f32 is Copy, we can just extend the flat vector, low cost
         self.flat_vectors.extend_from_slice(vector);
 
         // create the node with empty neighbor lists
@@ -409,7 +392,7 @@ impl HNSW {
         // Greedily traverse from top layer down to new node's level + 1
         // Just find the closest node, don't connect yet
         for layer in (max_level + 1..=entry_level).rev() {
-            // paper suggests simple greedy search for upper layers to avoid extra parameters,
+            // Paper suggests simple greedy search for upper layers to avoid extra parameters,
             // but we can also do a quick BFS with ef=1 for potentially better navigation (especially for clustered data)
             if self.use_simple_greedy_upper_layer {
                 current_nearest = self.search_layer_greedy(
@@ -558,7 +541,7 @@ impl HNSW {
                             // which also skips tombstoned nodes when adding candidates
                             continue;
                         }
-                        // Avoid adding duplicates
+                        // avoid duplicates
                         if !working.iter().any(|(id, _)| *id == adj) {
                             // Compute similarity for the adjacent node and add to working set
                             let sim = self.similarity(
@@ -571,25 +554,26 @@ impl HNSW {
                     }
                 }
             }
-            // Sort the extended candidate list by similarity descending
+            // sort by similarity descending
             working.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
         }
 
-        // Iterate candidates in order of similarity, applying the heuristic to filter out "redundant" neighbors
+        // iter candidates in order of similarity,
+        // applying the heuristic to filter out "redundant" neighbors
         for &(candidate_id, _sim) in &working {
             if result.len() >= max_results {
                 break;
             }
             let candidate_vec = self.get_vector_slice(candidate_id);
 
-            // Check if candidate is "redundant" with respect to already selected neighbors
+            // check if candidate is "redundant" with respect to already selected neighbors
             let mut is_good = true;
             for &selected_id in &result {
                 let selected_vec = self.get_vector_slice(selected_id);
                 let dist_candidate_to_selected = self.distance(candidate_vec, selected_vec);
                 let dist_query_to_selected = self.distance(query_vec, selected_vec);
 
-                // redundant if candidate is closer to selected neighbor than query is to that neighbor
+                // redundant: if candidate is closer to selected neighbor than query is to that neighbor
                 if dist_candidate_to_selected < dist_query_to_selected {
                     is_good = false;
                     break;
@@ -616,6 +600,7 @@ impl HNSW {
         result
     }
 
+    /// Dispatches to either the heuristic or simple neighbor selection method based on configuration.
     #[inline(always)]
     fn select_neighbors_dispatch(
         &self,
@@ -1014,6 +999,14 @@ impl HNSW {
         results
     }
 
+    /// Get entry point node, returns None if no entry point or if entry point is tombstoned
+    #[inline]
+    pub fn get_entry_point(&self) -> Option<&Node> {
+        self.entry_point
+            .and_then(|id| self.nodes.get(id))
+            .and_then(|node| if node.tombstone { None } else { Some(node) })
+    }
+
     /// Get node by node ID, returns None if not found or tombstoned
     #[inline]
     pub fn get_node(&self, uuid: &[u8; 32]) -> Option<&Node> {
@@ -1040,14 +1033,6 @@ impl HNSW {
             .iter()
             .filter(|node| node.max_level >= level)
             .collect()
-    }
-
-    /// Get entry point node, returns None if no entry point or if entry point is tombstoned
-    #[inline]
-    pub fn get_entry_point(&self) -> Option<&Node> {
-        self.entry_point
-            .and_then(|id| self.nodes.get(id))
-            .and_then(|node| if node.tombstone { None } else { Some(node) })
     }
 
     /// Returns the vector for the given node UUID, or None if not found/tombstoned
@@ -1110,7 +1095,7 @@ impl HNSW {
 
     /// Get the similarity metric used by this HNSW instance (defaults is [Cosine](Metrics::Cosine))
     #[inline]
-    pub fn get_metrics(&self) -> Metrics {
+    pub fn metrics(&self) -> Metrics {
         self.metrics.clone()
     }
 

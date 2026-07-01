@@ -1,10 +1,10 @@
 use ahash::HashSet;
 use anyhow::Result;
 use hnsw_rs::prelude::*;
-use indicatif::ProgressBar;
 use memmap2::MmapMut;
 use std::fs;
 use std::fs::File;
+use std::io::stdout;
 use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -155,7 +155,6 @@ fn main() -> Result<()> {
 
             for &m in &m_values {
                 let (hnsw, elapsed) = build_index_with_m(m, sample_count, dim, &mut mmap);
-                println!("Build with M={}, time: {:?}", m, elapsed);
                 build_results.push((m as f64, elapsed.as_secs_f64()));
 
                 let mut total_recall = 0.0f32;
@@ -167,7 +166,13 @@ fn main() -> Result<()> {
                 }
 
                 let avg_recall = total_recall / recall_sample as f32;
-                println!("Recall@{} with M={}: {:.4}", k, m, avg_recall);
+                println!(
+                    "M: {}, Build Time: {:.4}s, Recall@{}: {:.4}",
+                    m,
+                    elapsed.as_secs_f64(),
+                    k,
+                    avg_recall
+                );
                 recall_results.push((m as f64, avg_recall as f64));
             }
 
@@ -198,7 +203,6 @@ fn main() -> Result<()> {
 
             for &m in &m_values {
                 let (hnsw, elapsed) = build_index_with_m_heuristic(m, sample_count, dim, &mut mmap);
-                println!("Build with M={}, time: {:?}", m, elapsed);
                 build_results.push((m as f64, elapsed.as_secs_f64()));
 
                 let mut total_recall = 0.0f32;
@@ -210,7 +214,13 @@ fn main() -> Result<()> {
                 }
 
                 let avg_recall = total_recall / recall_sample as f32;
-                println!("Recall@{} with M={}: {:.4}", k, m, avg_recall);
+                println!(
+                    "M: {}, Build Time: {:.4}s, Recall@{}: {:.4}",
+                    m,
+                    elapsed.as_secs_f64(),
+                    k,
+                    avg_recall
+                );
                 recall_results.push((m as f64, avg_recall as f64));
             }
 
@@ -386,7 +396,7 @@ fn build_index_with_m(
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
         let mut id = [0u8; 32];
-        fastrand::fill(&mut id);
+        id[0..8].copy_from_slice(&(i as u64).to_le_bytes());
         hnsw.insert(id, vec, vec![], level).ok();
     }
     (hnsw, time.elapsed())
@@ -417,7 +427,7 @@ fn build_index_with_m_heuristic(
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
         let mut id = [0u8; 32];
-        fastrand::fill(&mut id);
+        id[0..8].copy_from_slice(&(i as u64).to_le_bytes());
         hnsw.insert(id, vec, vec![], level).ok();
     }
     (hnsw, time.elapsed())
@@ -425,6 +435,7 @@ fn build_index_with_m_heuristic(
 
 fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
     println!("Building index with {} vectors...", num_vectors);
+    let _ = stdout().flush();
 
     let mut hnsw = HNSW::new(
         16,
@@ -437,27 +448,35 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
         true,
     );
 
-    let pg_bar = ProgressBar::new(num_vectors as u64);
-
-    let mut flat_id = vec![0u8; num_vectors * 32];
-    fastrand::fill(&mut flat_id);
-
     let time = Instant::now();
     for i in 0..num_vectors {
-        pg_bar.inc(1);
+        if (i + 1) % 1234 == 0 || i == 0 || i == num_vectors - 1 {
+            print!(
+                "\rIndexing: {}/{} ({:.1}%)",
+                i + 1,
+                num_vectors,
+                (i + 1) as f64 / num_vectors as f64 * 100.0
+            );
+            stdout().flush().ok();
+        }
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
-        let id: [u8; 32] = flat_id[i * 32..(i + 1) * 32]
-            .try_into()
-            .expect("Failed to construct ID from flat_id");
+        let mut id = [0u8; 32];
+        id[0..8].copy_from_slice(&(i as u64).to_le_bytes());
         hnsw.insert(id, vec, vec![], level).ok();
     }
-    pg_bar.finish_and_clear();
+    println!();
+
+    println!(
+        "Index built in {:?} with {} insert/s",
+        time.elapsed(),
+        num_vectors as u64 / time.elapsed().as_secs()
+    );
 
     IndexStorage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
-        .expect("Failed to cache index to disk");
-    println!("Index built in {:?} and cached to disk.", time.elapsed());
-
+        .expect("Failed to save index to disk");
+    println!("Saved index to disk...");
+    let _ = stdout().flush();
     hnsw
 }
 
