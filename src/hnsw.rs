@@ -302,19 +302,17 @@ impl<I: ItemBackend> HNSW<I> {
         metadata: Vec<u8>,
         max_level: usize,
     ) -> Result<NodeUUID> {
-        if !self.node_backend.validate_item(node) {
-            return Err(anyhow::anyhow!("Invalid node insert"));
-        }
-
         if id.is_empty() {
             return Err(anyhow::anyhow!("NodeUUID cannot be empty"));
         }
-
         if self.id_mapper.contains_key(&id) {
             return Err(anyhow::anyhow!(
                 "NodeUUID: {} already exists",
                 hex::encode(id)
             ));
+        }
+        if !self.node_backend.validate_item(node) {
+            return Err(anyhow::anyhow!("Invalid node insert"));
         }
 
         let node_id = self.node_list.len();
@@ -489,7 +487,6 @@ impl<I: ItemBackend> HNSW<I> {
         let query_item = self.node_backend.get(query_id);
         let mut result: Vec<NodeIndex> = Vec::with_capacity(max_results);
         let mut discarded: Vec<NodeIndex> = Vec::new();
-
         let mut working: Vec<(NodeIndex, f32)> = candidates.to_vec();
 
         // TODO; this is bit unclear? with what paper says
@@ -978,6 +975,21 @@ impl<I: ItemBackend> HNSW<I> {
         } else {
             None
         }
+    }
+
+    /// Returns all items present in a specific layer (i.e. nodes with max_level >= given level are present),
+    /// including tombstoned ones, returns empty vec if level out of bounds
+    #[inline]
+    pub fn get_items_at_level(&self, level: usize) -> Vec<&I::Item> {
+        if level > self.max_layers {
+            return Vec::new();
+        }
+        self.node_list
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.max_level >= level)
+            .map(|(idx, _)| self.node_backend.get(idx))
+            .collect()
     }
 
     /// 'Lazy' deletes a node by node ID.

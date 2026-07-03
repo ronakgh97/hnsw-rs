@@ -2,9 +2,11 @@ use crate::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Trait for storing item behavior and similarity/distance computation in [HNSW],
-/// it handles & abstracts away all the internal graph logic.
-/// Implementor maybe use [wincode](https://crates.io/crates/wincode) derive macro [SchemaWrite] & [SchemaRead] for serialization/deserialization support.
-pub trait ItemStorage: Send + Sync {
+/// it handles & abstracts away all the internal graph logic,
+/// BUT DOES NOT HANDLE DATA Manipulation, ONLY STORE THE [ItemBackend] along with "GRAPH" overhead.
+/// Implementor need to use internal/external storage for retriving, pushing data and `distance` computation so HNSW can read/modify them,
+/// and maybe use [wincode](https://crates.io/crates/wincode) derive macro [SchemaWrite] & [SchemaRead] for serialization/deserialization support if needed.
+pub trait ItemBackend: Send + Sync {
     /// The type of items being compared.
     type Item: ?Sized + Send + Sync;
 
@@ -45,7 +47,7 @@ pub trait ItemStorage: Send + Sync {
 pub type VectorHnsw = HNSW<FlatVectorStore>;
 
 /// A flat vector store that holds 32-bit vectors in a contiguous memory layout.
-/// This implements [ItemStorage] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for vector search ops.
+/// This implements [ItemBackend] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for vector search ops.
 #[derive(SchemaRead, SchemaWrite)]
 pub struct FlatVectorStore {
     flat_vectors: Vec<f32>,
@@ -79,28 +81,28 @@ impl Default for FlatVectorStore {
     }
 }
 
-impl ItemStorage for FlatVectorStore {
+impl ItemBackend for FlatVectorStore {
     /// The item type is a slice of f32, representing a vector in the flat storage.
     type Item = [f32];
 
     #[inline(always)]
-    fn validate_item(&self, obj: &Self::Item) -> bool {
-        obj.len() == self.dim
+    fn validate_item(&self, item: &Self::Item) -> bool {
+        item.len() == self.dim
     }
 
     #[inline(always)]
-    fn search_modify(&self, obj: &mut Self::Item) {
+    fn search_modify(&self, item: &mut Self::Item) {
         if matches!(self.metric, Metrics::Cosine) {
-            normalize_l2(obj);
+            normalize_l2(item);
         }
     }
 
     #[inline(always)]
-    fn insert_modify(&mut self, obj: &mut Self::Item) {
+    fn insert_modify(&mut self, item: &mut Self::Item) {
         if matches!(self.metric, Metrics::Cosine) {
-            normalize_l2(obj);
+            normalize_l2(item);
         }
-        self.flat_vectors.extend_from_slice(obj);
+        self.flat_vectors.extend_from_slice(item);
     }
 
     #[inline(always)]
@@ -135,11 +137,11 @@ impl ItemStorage for FlatVectorStore {
     }
 
     #[inline(always)]
-    fn distance(&self, a: &Self::Item, b: &Self::Item) -> f32 {
+    fn distance(&self, item0: &Self::Item, item1: &Self::Item) -> f32 {
         match self.metric {
-            Metrics::Cosine => 1.0 - unsafe { dot_product(a, b) },
-            Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity(a, b) - 1.0) },
-            Metrics::RawDot => -unsafe { dot_product(a, b) },
+            Metrics::Cosine => 1.0 - unsafe { dot_product(item0, item1) },
+            Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity(item0, item1) - 1.0) },
+            Metrics::RawDot => -unsafe { dot_product(item0, item1) },
         }
     }
 }
