@@ -8,7 +8,7 @@ fn from_f32x8(v: f32x8) -> f32 {
     v.to_array().iter().sum()
 }
 
-/// Supported similarity metrics for vector search
+/// Supported similarity metrics for vector search with portable optimized SIMD usage
 #[derive(Debug, Clone, PartialEq, SchemaRead, SchemaWrite)]
 pub enum Metrics {
     Cosine,
@@ -116,6 +116,42 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         0.0
     } else {
         dot_sum / denominator
+    }
+}
+
+/// L1-normalize a vector slice in-place
+#[inline(always)]
+pub fn normalize_l1(v: &mut [f32]) {
+    const LANE: usize = 32;
+    unsafe {
+        let norm: f32 = v.iter().map(|x| x.abs()).sum(); // TODO: this is scalar, how lame ;(
+
+        if norm > f32::EPSILON {
+            let chunks = v.len() / LANE;
+            let inv = 1.0 / norm;
+            let inv_v = f32x8::splat(inv);
+            let ptr = v.as_mut_ptr();
+
+            for i in 0..chunks {
+                let offset = i * LANE;
+                let p = ptr.add(offset);
+
+                let v0 = f32x8::from(read_unaligned(p as *const [f32; 8]));
+                let v1 = f32x8::from(read_unaligned(p.add(8) as *const [f32; 8]));
+                let v2 = f32x8::from(read_unaligned(p.add(16) as *const [f32; 8]));
+                let v3 = f32x8::from(read_unaligned(p.add(24) as *const [f32; 8]));
+
+                write_unaligned(p as *mut [f32; 8], (v0 * inv_v).into());
+                write_unaligned(p.add(8) as *mut [f32; 8], (v1 * inv_v).into());
+                write_unaligned(p.add(16) as *mut [f32; 8], (v2 * inv_v).into());
+                write_unaligned(p.add(24) as *mut [f32; 8], (v3 * inv_v).into());
+            }
+
+            let remainder = chunks * LANE;
+            for i in remainder..v.len() {
+                *v.get_unchecked_mut(i) *= inv;
+            }
+        }
     }
 }
 
