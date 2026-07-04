@@ -1,4 +1,4 @@
-//! # hnsw_rs
+//! # tiny-hnsw
 //!
 //! A **generic** implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search.
 //! This implementation is based by this [paper](https://arxiv.org/pdf/1603.09320)
@@ -13,7 +13,39 @@
 //!
 //! - **Generic**: Pluggable backend via [`ItemBackend`](item::ItemBackend) trait — use [`FlatVectorStore`](item::FlatVectorStore) for vectors (which is specifically optimized using portable SIMD and unsafe code) or implement for any data type (string, locations, images, AST, bioinformatics, any arbitrary quantity etc.)
 //! - **[Wincode Support](https://crates.io/crates/wincode)**: Makes serialization/deserialization efficient, in-place and compact for disk-storage
-//! - **Parallel Processing**: Uses [Rayon](https://crates.io/crates/rayon) for parallel operations where possible
+//! - **Parallel Processing**: Uses [rayon](https://crates.io/crates/rayon) for parallel operations where possible
+//!
+//! ## Examples
+//!
+//!```rust
+//! use hnsw_rs::prelude::*;
+//!
+//! fn main() {
+//!     // create a vector store with Euclidean distance
+//!     let store = FlatVectorStore::init(128, Metrics::Euclidean, 100_000);
+//!     // build the HNSW graph (M=16, ef=200, 12 layers)
+//!     let mut hnsw = HNSW::new(store, 16, 200, 12, 1.0 / (16.0_f32).ln(), 100_000, true, true);
+//!
+//!     let (mut vectors, _) = gen_vec(100, 128, 42);
+//!
+//!     for v in vectors.iter_mut() {
+//!         let mut uuid = [0u8; 32];
+//!         fastrand::fill(&mut uuid);
+//!         let level = hnsw.get_random_level();
+//!         hnsw.insert(uuid, v, vec![], level).unwrap();
+//!     }
+//!
+//!     let results = hnsw.search(&mut vectors[0], 5, None);
+//!     println!("Top 5 neighbors: {:?}", results);
+//! }
+//!```
+//!
+//! For more options see [HNSW::with_options](hnsw::HNSW::with_options) and [FlatVectorStore](item::FlatVectorStore).
+//!
+//! ### Custom storage backends
+//!
+//! Implement [`ItemBackend`](item::ItemBackend) for any data type — strings, images, locations, bioinformatics etc.
+//! See the trait docs for an example.
 //!
 //! ## References
 //!

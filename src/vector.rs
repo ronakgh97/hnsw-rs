@@ -8,16 +8,21 @@ fn from_f32x8(v: f32x8) -> f32 {
     v.to_array().iter().sum()
 }
 
-/// Supported similarity metrics for vector search with portable optimized SIMD usage
+/// Supported similarity metrics for vector search.
+/// Internally uses SIMD-optimized implementations from this module.
 #[derive(Debug, Clone, PartialEq, SchemaRead, SchemaWrite)]
 pub enum Metrics {
+    /// Cosine similarity (vectors are L2-normalized on insert/search). Range `[-1, 1]`, higher = more similar.
     Cosine,
+    /// Euclidean distance converted to similarity: `1/(1+dist)`. Higher = more similar.
     Euclidean,
+    /// Raw dot product (no normalization). Higher = more similar.
     RawDot,
 }
 
 impl Metrics {
-    /// Calculate similarity between two vectors based on the selected metric
+    /// Calculate similarity between two vectors based on the selected metric.
+    /// Both slices must have the same length or get UB :)
     #[inline]
     pub fn calculate(&self, a: &[f32], b: &[f32]) -> f32 {
         match self {
@@ -339,7 +344,7 @@ pub fn matmul(
     result
 }
 
-// TODO: write this using _mm256 for arm & x86_64, ditch `wide` crate
+// TODO: write portable SIMD for ARM & x86_64, ditch `wide` crate
 /// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated and zeroed to the correct size (rows_a * cols_b).
 /// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
 #[inline(always)]

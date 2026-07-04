@@ -139,25 +139,26 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 /// **Pruning**: Select neighbors using either simple top-M or heuristic for diversity (Alg. 3 vs Alg. 4).
 /// **Tombstones**: Mark deleted nodes and ONLY skip during search end collection, periodic cleanup & reindexing.
 ///
+/// # Vector HNSW Example
+///
 ///```rust
 ///use hnsw_rs::prelude::*;
-///use fastrand::fill;
 ///
 /// fn main() {
 /// let mut hnsw = VectorHnsw::default(); // HNSW<FlatVectorStore>::default()
 ///
-///    let (mut vectors, _seed) = gen_vec(10, 1024, 0); // generate 10 1024-d vectors, seed=0
+///    let (mut vectors, _seed) = gen_vec(10, 1024, 0); // vectors=10 d=1024 seed=0
 ///
-///    for vector in vectors.iter_mut() { // need mut for l2 normalize (cosine only)
+///    for vector in vectors.iter_mut() {
 ///        let mut id = [0u8; 32];
-///        fastrand::fill(&mut id); // elegant 256-bit random [u8; 32]
-///        let level_asg = hnsw.get_random_level(); // compute mL from M
+///        fastrand::fill(&mut id); // elegant random 256-bit UUID
+///        let level_asg = hnsw.get_random_level(); // random graph level for this node
 ///        let metadata = vec![];
-///        hnsw.insert(id, vector, metadata, level_asg).unwrap();
+///        hnsw.insert(id, vector, metadata, level_asg).unwrap(); // take &mut vector btw
 ///    }
 ///
-///    assert!(hnsw.size() == vectors.len());
-///    assert!(hnsw.search(&mut vectors[5], 3, None).len() == 3); // take 5th element as query
+///    assert_eq!(hnsw.size(), 10);
+///    assert_eq!(hnsw.search(&mut vectors[5], 3, None).len(), 3);
 /// }
 ///```
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
@@ -213,9 +214,17 @@ impl<I: ItemBackend + Default> Default for HNSW<I> {
 
 impl<I: ItemBackend> HNSW<I> {
     /// Creates a new HNSW instance with specified parameters.
-    /// `distribution_bias` is the level norm factor `mL` (paper 4.1, default is 1/ln(16) ≈ 0.36, where 16 is M).
-    /// `use_simple_greedy_upper_layer` toggles between the paper's `"simple greedy search"` (paper default) and `search_layer_knn` with ef=1 for the upper-layer pass.
-    /// `use_heuristic_selection` is for neighbor selection: true = Alg. 4 (heuristic), false = Alg. 3 (simple, paper default).
+    ///
+    /// * `item_backend` — The storage backend that holds item data and computes distances (e.g. [`FlatVectorStore`]).
+    /// * `max_neighbors` — M, the max number of neighbors per node per layer (paper default 16).
+    /// * `ef_construction` — ef, size of the dynamic candidate list during insertion (paper default 200).
+    /// * `max_layers` — Maximum number of layers in the graph.
+    /// * `distribution_bias` — mL, level norm factor, controls how quickly layers thin out. Default is `1/ln(M)` ≈ 0.36 for M=16.
+    /// * `with_capacity` — Pre-allocated capacity (expected number of nodes).
+    /// * `use_simple_greedy_upper_layer` — true = simple greedy search (paper default), false = BFS with ef=1 for upper layers.
+    /// * `use_heuristic_selection` — true = Alg. 4 heuristic neighbor selection (diversity), false = Alg. 3 top-M (paper default).
+    ///
+    /// Note: `extend_candidates` and `keep_pruned_connections` are hardcoded to `false` here; use [`HNSW::with_options`] to configure them.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         item_backend: I,
@@ -243,10 +252,12 @@ impl<I: ItemBackend> HNSW<I> {
         }
     }
 
-    /// Creates a new HNSW instance with options over paper Alg. 4 flags.
-    /// `extend_candidates` and `keep_pruned_connections` correspond to Alg. 4's `extendCandidates` and `keepPrunedConnections` parameters, for high clustered data and fixed neighbor counts respectively.
-    /// `use_simple_greedy_upper_layer` toggles between the paper's "simple greedy search" (true) and `search_layer_knn` with ef=1 (false) for the upper-layer pass.
-    /// `use_heuristic_selection` enables Alg. 4 (heuristic) for neighbor selection; false = Alg. 3 (simple, paper default).
+    /// Creates a new HNSW instance with full control over paper Alg. 4 flags.
+    ///
+    /// Same as [`HNSW::new`] but also lets you configure `extend_candidates` and `keep_pruned_connections`.
+    ///
+    /// * `extend_candidates` — If true, extends candidate set with neighbors of candidates (Alg. 4). Useful for highly clustered data.
+    /// * `keep_pruned_connections` — If true, adds discarded candidates back to reach `max_results` (Alg. 4). Ensures fixed neighbor count.
     #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         item_backend: I,
@@ -276,9 +287,12 @@ impl<I: ItemBackend> HNSW<I> {
         }
     }
 
-    /// Generates a random level for a new node based on an exponential distribution uses the HNSW paper formula:
-    /// floor(-ln(<rand(0...1)>) * mL) where mL is the level norm factor stored in `distribution_bias` (paper default: 1/ln(M), e.g. 0.36 for M=16).
-    /// Used this in [HNSW::insert], or you may use your own distribution curve
+    /// Generate a random graph level for a new node using an exponential distribution (paper section 4.1).
+    /// Formula: `floor(-ln(U(0,1)) * mL)` where mL = `distribution_bias`.
+    /// Returns a value in `0..max_layers`.
+    ///
+    /// Typically used to assign `max_level` when calling [`HNSW::insert`],
+    /// or you can use your own curve to assign levels.
     #[inline(always)]
     pub fn get_random_level(&self) -> usize {
         let r: f32 = 1.0 - fastrand::f32();
@@ -286,15 +300,19 @@ impl<I: ItemBackend> HNSW<I> {
         level.min(self.max_layers - 1)
     }
 
-    /// Insert a new node into the HNSW graph
-    /// This is the core HNSW algorithm:
+    /// Insert a new node into the HNSW graph (paper Alg. 1).
     /// - If first node, just add it as entry point
     /// - Otherwise, search from top layer down to find nearest neighbors
     /// - Connect the new node to its neighbors at each layer
     ///
-    /// Returns `Ok(NodeUUID)` UUID of the newly inserted node and
-    /// `Err()` on [ItemBackend::validate_item] or empty or already existing [NodeUUID]
-    /// `ALGORITHM 1 from paper`
+    /// * `id` — A unique 256-bit UUID for this node. Must not already exist in the graph.
+    /// * `node` — The item data. Coerced to `&mut` so the [backend](ItemBackend) can potentially modify it if needed.
+    /// * `metadata` — Opaque bytes stored alongside the node. Pass `vec![]` if unused.
+    /// * `max_level` — The graph layer this node belongs to. Usually from [`HNSW::get_random_level`].
+    ///
+    /// Returns `Ok(NodeUUID)` — the same UUID that was passed in, on success, or `Err()` if
+    /// [`validation`](ItemBackend::validate_item) rejects the item (wrong dimensions, format, etc.) and
+    /// `id` is empty or already exist in the graph
     pub fn insert(
         &mut self,
         id: NodeUUID,
@@ -312,7 +330,7 @@ impl<I: ItemBackend> HNSW<I> {
             ));
         }
         if !self.node_backend.validate_item(node) {
-            return Err(anyhow::anyhow!("Invalid node insert"));
+            return Err(anyhow::anyhow!("Node validation check failed"));
         }
 
         let node_id = self.node_list.len();
@@ -781,9 +799,9 @@ impl<I: ItemBackend> HNSW<I> {
         self.search_layer_knn(query, &[current], ef, 0, &mut scratch)
     }
 
-    /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds
-    /// Returns results as (node_index, similarity) tuples sorted by similarity (highest first), empty if no entry point or k=0
-    /// - `query` - The query item
+    /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds.
+    /// Returns results as (NodeIndex, f32) tuples sorted by similarity (highest first), empty if no entry point or k=0.
+    /// - `query` - The &mut query item for optional pre-processing & stuffs
     /// - `k` - Number of nearest neighbors to return
     /// - `ef_search` - Optional bounded width for search. If None, uses k * DEFAULT_EF_MULTIPLIER
     pub fn search(
@@ -798,8 +816,8 @@ impl<I: ItemBackend> HNSW<I> {
             .collect()
     }
 
-    /// Search and return results with metadata, similar to [HNSW::search], but "lazy" collects metadata on return.
-    /// Returns results as (node_id, similarity, metadata_as_bytes) tuples sorted by similarity (highest first)
+    /// Like [`HNSW::search`] but also returns the `"lazily collected"` metadata bytes stored with each node.
+    /// Returns `Vec<(NodeUUID, f32, Vec<u8>)>` sorted by similarity (highest first).
     pub fn search_metadata(
         &self,
         query: &mut I::Item,
@@ -866,7 +884,7 @@ impl<I: ItemBackend> HNSW<I> {
     }
 
     /// Brute-force parallel search for testing and validation.
-    /// Returns similar to [HNSW::search]
+    /// Scans *all* non-tombstoned nodes using rayon, so O(N). Use [`HNSW::search`] for real usage.
     #[inline]
     pub fn brute_search(&self, query: &mut I::Item, k: usize) -> Vec<(NodeUUID, f32)> {
         use rayon::iter::*;
@@ -892,7 +910,7 @@ impl<I: ItemBackend> HNSW<I> {
     }
 
     /// Brute-force parallel search with metadata included in results.
-    /// Returns similar to [HNSW::search_metadata]
+    /// Returns similar to [HNSW::search_metadata].
     #[inline]
     pub fn brute_search_metadata(
         &self,
@@ -939,7 +957,7 @@ impl<I: ItemBackend> HNSW<I> {
             .and_then(|node| if node.tombstone { None } else { Some(node) })
     }
 
-    /// Convenience method to get node by index, returns None if index out of bounds, internally does [`self.nodes.get(idx)`](Vec::get)
+    /// Convenience method to get node by index, returns None if not found
     #[inline]
     pub fn get_node_by_index(&self, idx: usize) -> Option<&Node> {
         self.node_list.get(idx)
@@ -959,15 +977,17 @@ impl<I: ItemBackend> HNSW<I> {
             .collect()
     }
 
-    /// Returns the item for the given node UUID, or None if not found/tombstoned
+    /// Returns the item for the given node UUID, or None if not found or tombstoned
     #[inline]
     pub fn get_item(&self, uuid: &[u8; 32]) -> Option<&I::Item> {
         self.id_mapper
             .get(uuid)
-            .map(|&idx| self.node_backend.get(idx))
+            .and_then(|&id| self.node_list.get(id).map(|node| (id, node)))
+            .filter(|(_, node)| !node.tombstone)
+            .map(|(id, _)| self.node_backend.get(id))
     }
 
-    /// Returns the item for the given node index, or None if out of bounds
+    /// Returns the item for the given node index, or None if not found
     #[inline]
     pub fn get_item_by_index(&self, idx: NodeIndex) -> Option<&I::Item> {
         if idx < self.node_list.len() {
@@ -978,7 +998,7 @@ impl<I: ItemBackend> HNSW<I> {
     }
 
     /// Returns all items present in a specific layer (i.e. nodes with max_level >= given level are present),
-    /// including tombstoned ones, returns empty vec if level out of bounds
+    /// including tombstoned ones, returns empty vec if level out of bounds.
     #[inline]
     pub fn get_items_at_level(&self, level: usize) -> Vec<&I::Item> {
         if level > self.max_layers {
@@ -992,9 +1012,10 @@ impl<I: ItemBackend> HNSW<I> {
             .collect()
     }
 
-    /// 'Lazy' deletes a node by node ID.
-    /// If the deleted node is the entry point, finds a new entry point.
-    /// Returns Err() if node ID not found.
+    /// Soft-deletes (tombstones) a node by its UUID.
+    /// The node's graph entry is kept but skipped in search end results. If the deleted node was the entry point, a replacement is found.
+    /// Use [`HNSW::tombstone_ratio`] to monitor accumulated tombstones and trigger reindexing.
+    /// Returns `Err` if the UUID does not exist in the graph.
     #[inline(always)]
     pub fn delete_node(&mut self, uuid: &[u8; 32]) -> Result<()> {
         let node_idx = if let Some(idx) = self.id_mapper.get(uuid).copied() {
@@ -1072,13 +1093,13 @@ impl<I: ItemBackend> HNSW<I> {
     }
 
     #[inline]
-    /// Returns the ratio of tombstoned nodes to total nodes
+    /// Returns the ratio of tombstoned nodes to total nodes (float division, 0..=1).
     /// Can be used in trigger when to clean up & reindex
-    pub fn tombstone_ratio(&self) -> f32 {
+    pub fn tombstone_ratio(&self) -> f64 {
         if self.node_list.is_empty() {
             0.0
         } else {
-            self.tombstone_count() as f32 / self.node_list.len() as f32
+            self.tombstone_count() as f64 / self.node_list.len() as f64
         }
     }
 
@@ -1132,13 +1153,12 @@ impl<I: ItemBackend> HNSW<I> {
 /// Alias for node index type, used for indexing into the `node_list`.
 pub type NodeIndex = usize;
 
-/// Unique identifier for a node, (Stable across reindexing).
-/// A 256-bit UUID provided when inserting a node.
-/// This helps for tracking it when rebuilding the graph.
+/// Unique 256-bit identifier for a node, provided at insertion time.
+/// Stable across reindexing — the same UUID always refers to the same "logical" item.
 pub type NodeUUID = [u8; 32];
 
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
-/// Represents a node in the HNSW graph.
+/// A node in the HNSW graph: UUID, metadata, neighbor lists per layer, and a tombstone flag.
 pub struct Node {
     /// Unique Stable Identifier for the node, provided during insertion
     pub uuid: NodeUUID,

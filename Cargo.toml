@@ -1,6 +1,6 @@
 [package]
 name = "tiny-hnsw"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 edition = "2024"
 authors = ["ronakgh {ronakgh97@gmail.com}"]
 description = "A simplified implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."

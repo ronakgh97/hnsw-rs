@@ -1,14 +1,18 @@
-An implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor search.
+**Generic** implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor
+search.
 This is pretty much ["paper-compliant"](https://arxiv.org/pdf/1603.09320), its simplified, well documentated and easy to
-understand & reason, while still being *reasonably* efficient and robust, I guess
+understand & reason, while still being *reasonably* efficient and robust, I guess.
+Its can be used to `nearest-search` in *any SPACE* with given distance valid metric,
+for examples: vector, string, locations, image, audio, bioinformatics etc.
 
-Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), [ARCHIVED/ABANDON] which is a vector database built on
+Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), [ARCHIVED/ABANDON] which is a vector database
+built on
 top of this HNSW implementation.
 
 **How to bench**?
 
 Make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M),
-and also change [build config](.cargo/config.toml) to your liking.
+and also change [build config](.cargo/config.toml).
 
 ```shell
 cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
@@ -18,38 +22,38 @@ cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
 ```shell
 # Alg. 3 (simple, paper default): max_n: 16, ef_const: 96, max_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
-Index built in 136.3167937s with 1131 insert/s
-Search with ef: 32 took, QPS: 3487.56
-Search with ef: 64 took, QPS: 2166.77
-Search with ef: 128 took, QPS: 1282.55
-Search with ef: 256 took, QPS: 726.21
-Search with ef: 512 took, QPS: 413.41
-Search with ef: 768 took, QPS: 291.45
+Index built in 155.7452558s with 992 insert/s
+Search with ef: 32 took, QPS: 3450.67
+Search with ef: 64 took, QPS: 2142.83
+Search with ef: 128 took, QPS: 1270.25
+Search with ef: 256 took, QPS: 736.61
+Search with ef: 512 took, QPS: 413.72
+Search with ef: 768 took, QPS: 297.11
 
-Recall@12: 0.9858, Time: 34.538246
-Recall@24: 0.9889, Time: 34.598064
-Recall@48: 0.9925, Time: 35.0367
-Recall@96: 0.9943, Time: 36.10253
-Recall@192: 0.9960, Time: 37.633686
-Recall@384: 0.9973, Time: 41.085598
+Recall@12: 0.9847, Time: 33.56408
+Recall@24: 0.9874, Time: 34.45116
+Recall@48: 0.9916, Time: 35.24474
+Recall@96: 0.9939, Time: 36.08386
+Recall@192: 0.9959, Time: 37.60326
+Recall@384: 0.9971, Time: 40.60838
 
 Simple selection
-M: 8, Build Time: 5.3749s, Recall@32: 0.5101
-M: 16, Build Time: 9.1476s, Recall@32: 0.9703
-M: 32, Build Time: 20.5473s, Recall@32: 0.9854
-M: 48, Build Time: 36.7546s, Recall@32: 0.9917
-M: 64, Build Time: 63.0919s, Recall@32: 0.9969
-M: 96, Build Time: 139.5258s, Recall@32: 0.9991
+M: 8, Build Time: 4.8426s, Recall@32: 0.7424
+M: 16, Build Time: 8.9864s, Recall@32: 0.9656
+M: 32, Build Time: 20.3075s, Recall@32: 0.9850
+M: 48, Build Time: 36.5618s, Recall@32: 0.9929
+M: 64, Build Time: 64.1669s, Recall@32: 0.9965
+M: 96, Build Time: 387.7843s, Recall@32: 0.9991
 
 # same config varying M (Alg. 3), sample_size: 32540
 # Note: ef_const IS scales with M (ef_const = max(96, 2*M)) during this run
 Heuristic selection
-M: 8, Build Time: 8.8142s, Recall@32: 0.9669
-M: 16, Build Time: 15.2515s, Recall@32: 0.9888
-M: 32, Build Time: 14.5271s, Recall@32: 0.9925
-M: 48, Build Time: 14.9043s, Recall@32: 0.9938
-M: 64, Build Time: 21.8074s, Recall@32: 0.9965
-M: 96, Build Time: 38.0243s, Recall@32: 0.9987
+M: 8, Build Time: 44.5019s, Recall@32: 0.9612
+M: 16, Build Time: 56.8276s, Recall@32: 0.9878
+M: 32, Build Time: 70.2665s, Recall@32: 0.9912
+M: 48, Build Time: 70.0078s, Recall@32: 0.9919
+M: 64, Build Time: 99.7021s, Recall@32: 0.9969
+M: 96, Build Time: 102.1874s Recall@32: 0.9990
 ```
 
 **some observations**

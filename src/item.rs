@@ -6,6 +6,46 @@ use wincode::{SchemaRead, SchemaWrite};
 /// BUT DOES NOT HANDLE DATA Manipulation, ONLY STORE THE [ItemBackend] along with "GRAPH" overhead.
 /// Implementor need to use internal/external storage for retriving, pushing data and `distance` computation so HNSW can read/modify them,
 /// and maybe use [wincode](https://crates.io/crates/wincode) derive macro [SchemaWrite] & [SchemaRead] for serialization/deserialization support if needed.
+///
+/// # Implementation example
+///
+///```rust
+/// use hnsw_rs::prelude::*;
+///
+/// struct HammingBackend {
+///     data: Vec<u8>,
+///     bytes_per_item: usize,
+/// }
+///
+/// impl ItemBackend for HammingBackend {
+///     type Item = [u8];
+///
+///     fn validate_item(&self, item: &[u8]) -> bool {
+///         item.len() == self.bytes_per_item
+///     }
+///
+///     fn search_modify(&self, _item: &mut [u8]) {} // no pre-processing needed
+///     fn insert_modify(&mut self, _item: &mut [u8]) {} // no pre-processing needed
+///
+///     fn get(&self, idx: NodeIndex) -> &[u8] {
+///         let start = idx * self.bytes_per_item;
+///         &self.data[start..start + self.bytes_per_item]
+///     }
+///
+///     fn len(&self) -> usize { self.data.len() / self.bytes_per_item }
+///     fn is_empty(&self) -> bool { self.data.is_empty() }
+///     fn mem_size(&self) -> usize { self.data.len() }
+///
+///     fn similarity(&self, a: &[u8], b: &[u8]) -> f32 {
+///         let dist: usize = a.iter().zip(b.iter()).map(|(x, y)| (x ^ y).count_ones() as usize).sum();
+///         1.0 / (1.0 + dist as f32)
+///     }
+///
+///     fn distance(&self, a: &[u8], b: &[u8]) -> f32 {
+///         a.iter().zip(b.iter()).map(|(x, y)| (x ^ y).count_ones() as f32).sum()
+///     }
+/// }
+///```
 pub trait ItemBackend: Send + Sync {
     /// The type of items being compared.
     type Item: ?Sized + Send + Sync;
@@ -68,7 +108,7 @@ impl FlatVectorStore {
 }
 
 impl Default for FlatVectorStore {
-    /// Default initialization with Cosine metric, 1024 dimensions, and with_capacity of 512k vectors.
+    /// Default initialization with Cosine metric, 1024 dimensions, and ~255k vector capacity.
     fn default() -> Self {
         let dim = 1024;
         let metric = Metrics::Cosine;

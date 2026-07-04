@@ -13,7 +13,10 @@ pub struct IndexStorage;
 
 impl IndexStorage {
     /// Reads an HNSW index from disk using memory mapping for efficient access.
-    /// Takes [wincode::config] for deserialization and returns the `HNSW<I>` index.
+    /// Takes [wincode::config::Configuration] for deserialization or [`wincode::config::Configuration::default`] for most cases.
+    ///
+    /// Requires that `I` (the [backend](ItemBackend)) implements `SchemaRead` + `SchemaWrite` with `Dst = I` / `Src = I`.
+    /// ([`FlatVectorStore`] has this derives, so [`VectorHnsw`] works *automagically*)
     pub fn read_from_disk<I, C>(path: &PathBuf, config: C) -> Result<HNSW<I>>
     where
         I: ItemBackend + for<'de> SchemaRead<'de, C, Dst = I> + SchemaWrite<C, Src = I>,
@@ -28,8 +31,8 @@ impl IndexStorage {
         Ok(index)
     }
 
-    /// Writes an `HNSW<I>` index to disk. (TODO: this is suboptimal impl, it allocated gigantic memory for the whole index)
-    /// Takes [wincode::config] for serialization and returns a Result containing the checksum as a hex string.
+    /// Writes an `HNSW<I>` index to disk. *(TODO: this is suboptimal implementation, it allocated gigantic memory for the whole index)*
+    /// Takes [wincode::config::Configuration] for serialization and returns a Result containing the sha256 checksum as a hex string.
     pub fn flush_to_disk<I, C>(path: &PathBuf, index: &HNSW<I>, config: C) -> Result<String>
     where
         I: ItemBackend + for<'de> SchemaRead<'de, C, Dst = I> + SchemaWrite<C, Src = I>,

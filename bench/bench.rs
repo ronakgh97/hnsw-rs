@@ -8,7 +8,9 @@ use std::io::stdout;
 use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::time::Instant;
-// TODO: Something wrong, this is too slow, need to figure out later
+
+// TODO: Something wrong, this is way beyond slow, need to figure out later
+
 const DATASET_CACHE: &str = "./bench/bench_data.bin";
 const INDEX_CACHE: &str = "./bench/bench_index.bin";
 
@@ -45,7 +47,6 @@ fn main() -> Result<()> {
     let (num, dim, mut mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
 
     println!("Total vectors: {}, dimension: {}", num, dim);
-    // println!("Sample vector: {:?}", get_vector(&mmap, 0, dim));
 
     // Build largest index and cache it
     {
@@ -64,7 +65,10 @@ fn main() -> Result<()> {
     // Bench starts from here
     {
         let (num, _, mut mmap) = load_vectors_mmap(PathBuf::from(DATASET_CACHE));
-        let hnsw = IndexStorage::read_from_disk(&PathBuf::from(INDEX_CACHE))?;
+        let config = wincode::config::Configuration::default()
+            .enable_zero_copy_align_check()
+            .with_preallocation_size_limit::<PREALLOCATION_SIZE>();
+        let hnsw: VectorHnsw = IndexStorage::read_from_disk(&PathBuf::from(INDEX_CACHE), config)?;
 
         let mut rng = fastrand::Rng::new();
         let query_count = 4096;
@@ -91,7 +95,6 @@ fn main() -> Result<()> {
                 let time = Instant::now();
 
                 for query_vec in queries_idx.iter().take(query_count) {
-                    // let idx = rng.random_range(0..num);
                     let query_vec = get_vector(&mut mmap, *query_vec, dim);
                     let _ = hnsw.search(query_vec, k, Some(ef));
                 }
@@ -119,7 +122,6 @@ fn main() -> Result<()> {
                 let start = Instant::now();
                 for query_vec in queries_idx.iter_mut().take(recall_sample) {
                     let ef = k * 4;
-                    // let idx = rng.random_range(0..num);
                     let query_vec = get_vector(&mut mmap, *query_vec, dim);
                     let hnsw_search = hnsw.search(query_vec, k, Some(ef));
                     let brute_search = hnsw.brute_search(query_vec, k);
@@ -241,7 +243,7 @@ fn main() -> Result<()> {
 }
 
 /// Reads parquet files from input directory, extracts "openai" column, converts to f32 and writes to compact binary format: [num_vectors: u32][dim: u32][vectors: f32...]
-/// Datasets used: https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M
+/// [Datasets](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M) used.
 fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
     use arrow::array::{Array, Float64Array, ListArray};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -376,14 +378,14 @@ fn build_index_with_m(
     num_vectors: usize,
     dim: usize,
     mmap: &mut MmapMut,
-) -> (HNSW, std::time::Duration) {
+) -> (VectorHnsw, std::time::Duration) {
     let ef_const = 96.max(2 * m);
-    let mut hnsw = HNSW::with_options(
+    let mut hnsw: VectorHnsw = HNSW::with_options(
+        FlatVectorStore::init(dim, Metrics::Cosine, num_vectors),
         m,
         ef_const,
         18,
         1.0 / (m as f32).ln(),
-        Some(Metrics::Cosine),
         num_vectors,
         false,
         false,
@@ -407,14 +409,14 @@ fn build_index_with_m_heuristic(
     num_vectors: usize,
     dim: usize,
     mmap: &mut MmapMut,
-) -> (HNSW, std::time::Duration) {
+) -> (VectorHnsw, std::time::Duration) {
     let ef_const = 96.max(2 * m);
-    let mut hnsw = HNSW::with_options(
+    let mut hnsw: VectorHnsw = HNSW::with_options(
+        FlatVectorStore::init(dim, Metrics::Cosine, num_vectors),
         m,
         ef_const,
         18,
         1.0 / (m as f32).ln(),
-        Some(Metrics::Cosine),
         num_vectors,
         false,
         false,
@@ -433,16 +435,16 @@ fn build_index_with_m_heuristic(
     (hnsw, time.elapsed())
 }
 
-fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
+fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> VectorHnsw {
     println!("Building index with {} vectors...", num_vectors);
     let _ = stdout().flush();
 
-    let mut hnsw = HNSW::new(
+    let mut hnsw: VectorHnsw = HNSW::new(
+        FlatVectorStore::init(dim, Metrics::Cosine, num_vectors),
         16,
         96,
         18,
         1.0 / 16.0_f32.ln(),
-        Some(Metrics::Cosine),
         num_vectors,
         true,
         true,
@@ -450,15 +452,14 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
 
     let time = Instant::now();
     for i in 0..num_vectors {
-        if (i + 1) % 1234 == 0 || i == 0 || i == num_vectors - 1 {
-            print!(
-                "\rIndexing: {}/{} ({:.1}%)",
-                i + 1,
-                num_vectors,
-                (i + 1) as f64 / num_vectors as f64 * 100.0
-            );
-            stdout().flush().ok();
-        }
+        print!(
+            "\rIndexing: {}/{} ({:.1}%)",
+            i + 1,
+            num_vectors,
+            (i + 1) as f64 / num_vectors as f64 * 100.0
+        );
+        stdout().flush().ok();
+
         let vec = get_vector(mmap, i, dim);
         let level = hnsw.get_random_level();
         let mut id = [0u8; 32];
@@ -473,7 +474,10 @@ fn cache_index(num_vectors: usize, dim: usize, mmap: &mut MmapMut) -> HNSW {
         num_vectors as u64 / time.elapsed().as_secs()
     );
 
-    IndexStorage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw)
+    let config = wincode::config::Configuration::default()
+        .enable_zero_copy_align_check()
+        .with_preallocation_size_limit::<PREALLOCATION_SIZE>();
+    IndexStorage::flush_to_disk(&PathBuf::from(INDEX_CACHE), &hnsw, config)
         .expect("Failed to save index to disk");
     println!("Saved index to disk...");
     let _ = stdout().flush();
