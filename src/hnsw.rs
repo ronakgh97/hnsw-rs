@@ -198,7 +198,7 @@ pub struct HNSW<I: ItemBackend> {
 
 impl<I: ItemBackend + Default> Default for HNSW<I> {
     /// Default Config:
-    /// - I::default
+    /// - I::default()
     /// - max_neighbors=16
     /// - ef_construction=256
     /// - max_layers=18
@@ -405,7 +405,7 @@ impl<I: ItemBackend> HNSW<I> {
             );
 
             // Apply neighbor selection (Alg. 3 simple or Alg. 4 heuristic)
-            let selected = self.select_neighbors_dispatch(node_id, &candidates, max_n, layer);
+            let selected = self.select_neighbors_dispatch(node_id, candidates, max_n, layer);
 
             // Connect new node to its neighbors (bidirectional)
             for &neighbor_id in &selected {
@@ -609,14 +609,14 @@ impl<I: ItemBackend> HNSW<I> {
     /// Takes `&mut SearchScratch` to reuse allocations across calls.
     /// `ALGORITHM 5 from paper`
     #[inline]
-    fn search_layer_knn(
+    fn search_layer_knn<'scratch>(
         &self,
         query: &I::Item,
         entries: &[NodeIndex],
         ef: usize,
         layer: usize,
-        scratch: &mut SearchScratch,
-    ) -> Vec<(NodeIndex, f32)> {
+        scratch: &'scratch mut SearchScratch,
+    ) -> &'scratch [(NodeIndex, f32)] {
         let ef = ef.max(1);
         let capacity = ef.saturating_mul(2).max(1);
         let max_nodes = self.node_list.len();
@@ -687,8 +687,7 @@ impl<I: ItemBackend> HNSW<I> {
             .result_buf
             .sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
 
-        // maintain the capacity of the buffer for next call
-        std::mem::replace(&mut scratch.result_buf, Vec::with_capacity(capacity))
+        &scratch.result_buf
     }
 
     /// Remove connections to keep only the M closest neighbors
@@ -797,6 +796,7 @@ impl<I: ItemBackend> HNSW<I> {
         // `search_layer_knn` already returns sorted results
         // return full ef results, search() handles truncation after filtering tombstones
         self.search_layer_knn(query, &[current], ef, 0, &mut scratch)
+            .to_vec()
     }
 
     /// Finds topK nearest neighbors to a query, if `ef_search` is None then, internally does a loop increase base ef for better odds.

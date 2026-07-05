@@ -22,38 +22,38 @@ cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
 ```shell
 # Alg. 3 (simple, paper default): max_n: 16, ef_const: 96, max_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
-Index built in 155.7452558s with 992 insert/s
-Search with ef: 32 took, QPS: 3450.67
-Search with ef: 64 took, QPS: 2142.83
-Search with ef: 128 took, QPS: 1270.25
-Search with ef: 256 took, QPS: 736.61
-Search with ef: 512 took, QPS: 413.72
-Search with ef: 768 took, QPS: 297.11
+Index built in 157.4566122s with 979 insert/s
+Search with ef: 32 took, QPS: 3410.19
+Search with ef: 64 took, QPS: 2156.62
+Search with ef: 128 took, QPS: 1269.34
+Search with ef: 256 took, QPS: 746.75
+Search with ef: 512 took, QPS: 412.69
+Search with ef: 768 took, QPS: 305.70
 
-Recall@12: 0.9847, Time: 33.56408
-Recall@24: 0.9874, Time: 34.45116
-Recall@48: 0.9916, Time: 35.24474
-Recall@96: 0.9939, Time: 36.08386
-Recall@192: 0.9959, Time: 37.60326
-Recall@384: 0.9971, Time: 40.60838
+Recall@12: 0.9860, Time: 34.02246
+Recall@24: 0.9878, Time: 33.366547
+Recall@48: 0.9912, Time: 34.083935
+Recall@96: 0.9941, Time: 35.49801
+Recall@192: 0.9957, Time: 36.73429
+Recall@384: 0.9972, Time: 39.568615
 
 Simple selection
-M: 8, Build Time: 4.8426s, Recall@32: 0.7424
-M: 16, Build Time: 8.9864s, Recall@32: 0.9656
-M: 32, Build Time: 20.3075s, Recall@32: 0.9850
-M: 48, Build Time: 36.5618s, Recall@32: 0.9929
-M: 64, Build Time: 64.1669s, Recall@32: 0.9965
-M: 96, Build Time: 387.7843s, Recall@32: 0.9991
+M: 8, Build Time: 5.0803s, Recall@32: 0.8366
+M: 16, Build Time: 9.0679s, Recall@32: 0.9647
+M: 32, Build Time: 20.7123s, Recall@32: 0.9822
+M: 48, Build Time: 37.2085s, Recall@32: 0.9917
+M: 64, Build Time: 63.1728s, Recall@32: 0.9966
+M: 96, Build Time: 138.0020s, Recall@32: 0.9993
 
 # same config varying M (Alg. 3), sample_size: 32540
 # Note: ef_const IS scales with M (ef_const = max(96, 2*M)) during this run
 Heuristic selection
-M: 8, Build Time: 44.5019s, Recall@32: 0.9612
-M: 16, Build Time: 56.8276s, Recall@32: 0.9878
-M: 32, Build Time: 70.2665s, Recall@32: 0.9912
-M: 48, Build Time: 70.0078s, Recall@32: 0.9919
-M: 64, Build Time: 99.7021s, Recall@32: 0.9969
-M: 96, Build Time: 102.1874s Recall@32: 0.9990
+M: 8, Build Time: 8.6120s, Recall@32: 0.9637
+M: 16, Build Time: 15.5303s, Recall@32: 0.9881
+M: 32, Build Time: 14.6046s, Recall@32: 0.9912
+M: 48, Build Time: 14.9643s, Recall@32: 0.9917
+M: 64, Build Time: 21.7570s, Recall@32: 0.9956
+M: 96, Build Time: 36.7558s, Recall@32: 0.9984
 ```
 
 **some observations**

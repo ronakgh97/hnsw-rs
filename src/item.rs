@@ -25,7 +25,9 @@ use wincode::{SchemaRead, SchemaWrite};
 ///     }
 ///
 ///     fn search_modify(&self, _item: &mut [u8]) {} // no pre-processing needed
-///     fn insert_modify(&mut self, _item: &mut [u8]) {} // no pre-processing needed
+///     fn insert_modify(&mut self, item: &mut [u8]) {
+///         self.data.extend_from_slice(item);
+///     }
 ///
 ///     fn get(&self, idx: NodeIndex) -> &[u8] {
 ///         let start = idx * self.bytes_per_item;
