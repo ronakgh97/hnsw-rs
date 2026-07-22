@@ -945,7 +945,7 @@ impl<I: ItemBackend> HNSW<I> {
     pub fn get_entry_point(&self) -> Option<&Node> {
         self.entry_point
             .and_then(|id| self.node_list.get(id))
-            .and_then(|node| if node.tombstone { None } else { Some(node) })
+            .filter(|&node| !node.tombstone)
     }
 
     /// Get node by node ID, returns None if not found or tombstoned
@@ -954,7 +954,7 @@ impl<I: ItemBackend> HNSW<I> {
         self.id_mapper
             .get(uuid)
             .and_then(|&id| self.node_list.get(id))
-            .and_then(|node| if node.tombstone { None } else { Some(node) })
+            .filter(|&node| !node.tombstone)
     }
 
     /// Convenience method to get node by index, returns None if not found
