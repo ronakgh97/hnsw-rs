@@ -1,8 +1,8 @@
 **Generic** implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor
 search.
 This is pretty much ["paper-compliant"](https://arxiv.org/pdf/1603.09320), its simplified, well documentated and easy to
-understand & reason, while still being *reasonably* efficient and robust, I guess.
-Its can be used to `nearest-search` in *any SPACE* with given distance valid metric,
+understand & reason, while still being _reasonably_ efficient and robust, I guess.
+Its can be used to `nearest-search` in _any SPACE_ with given distance valid metric,
 for examples: vector, string, locations, image, audio, bioinformatics etc.
 
 Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), [ARCHIVED/ABANDON] which is a vector database
@@ -22,39 +22,41 @@ cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
 ```shell
 # Alg. 3 (simple, paper default): max_n: 16, ef_const: 96, max_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
-Index built in 157.4566122s with 979 insert/s
-Search with ef: 32 took, QPS: 3410.19
-Search with ef: 64 took, QPS: 2156.62
-Search with ef: 128 took, QPS: 1269.34
-Search with ef: 256 took, QPS: 746.75
-Search with ef: 512 took, QPS: 412.69
-Search with ef: 768 took, QPS: 305.70
+Index built in 141.5677818s with 1091 insert/s
+Search with ef: 32 took, QPS: 3523.23
+Search with ef: 64 took, QPS: 2285.94
+Search with ef: 128 took, QPS: 1375.67
+Search with ef: 256 took, QPS: 796.74
+Search with ef: 512 took, QPS: 454.85
+Search with ef: 768 took, QPS: 325.76
 
-Recall@12: 0.9860, Time: 34.02246
-Recall@24: 0.9878, Time: 33.366547
-Recall@48: 0.9912, Time: 34.083935
-Recall@96: 0.9941, Time: 35.49801
-Recall@192: 0.9957, Time: 36.73429
-Recall@384: 0.9972, Time: 39.568615
+Recall@12: 0.9885, Time: 30.7171
+Recall@24: 0.9895, Time: 31.863916
+Recall@48: 0.9919, Time: 32.321754
+Recall@96: 0.9944, Time: 33.90104
+Recall@192: 0.9959, Time: 35.229668
+Recall@384: 0.9972, Time: 38.83932
 
 Simple selection
-M: 8, Build Time: 5.0803s, Recall@32: 0.8366
-M: 16, Build Time: 9.0679s, Recall@32: 0.9647
-M: 32, Build Time: 20.7123s, Recall@32: 0.9822
-M: 48, Build Time: 37.2085s, Recall@32: 0.9917
-M: 64, Build Time: 63.1728s, Recall@32: 0.9966
-M: 96, Build Time: 138.0020s, Recall@32: 0.9993
+M: 8, Build Time: 5.0802s, Recall@32: 0.8971
+M: 16, Build Time: 8.3450s, Recall@32: 0.9661
+M: 32, Build Time: 32.6053s, Recall@32: 0.9840
+M: 48, Build Time: 37.9332s, Recall@32: 0.9907
+M: 64, Build Time: 58.1063s, Recall@32: 0.9954
+M: 96, Build Time: 128.2895s, Recall@32: 0.9987
 
 # same config varying M (Alg. 3), sample_size: 32540
 # Note: ef_const IS scales with M (ef_const = max(96, 2*M)) during this run
 Heuristic selection
-M: 8, Build Time: 8.6120s, Recall@32: 0.9637
-M: 16, Build Time: 15.5303s, Recall@32: 0.9881
-M: 32, Build Time: 14.6046s, Recall@32: 0.9912
-M: 48, Build Time: 14.9643s, Recall@32: 0.9917
-M: 64, Build Time: 21.7570s, Recall@32: 0.9956
-M: 96, Build Time: 36.7558s, Recall@32: 0.9984
+M: 8, Build Time: 8.2072s, Recall@32: 0.9609
+M: 16, Build Time: 14.4271s, Recall@32: 0.9886
+M: 32, Build Time: 13.3286s, Recall@32: 0.9921
+M: 48, Build Time: 15.2372s, Recall@32: 0.9926
+M: 64, Build Time: 22.1368s, Recall@32: 0.9968
+M: 96, Build Time: 37.2041s, Recall@32: 0.9986
 ```
+
+> Last updated: 7/26/2026
 
 **some observations**
 on [commit](https://github.com/ronakgh97/hnsw-rs/commit/57aa9fd42877c267e22645d7821c1f671ed76896)
