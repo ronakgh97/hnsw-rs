@@ -41,6 +41,7 @@ pub fn dequant(vector_i8: &[i8], vector_f32: &mut [f32], scale: f32) {
 fn test_quant_loss() {
     use crate::utils::gen_vec;
     use crate::vector::dot_product;
+    use crate::vector::dot_product_i8;
 
     let (generated_vec, _) = gen_vec(2, 1024, 99); // 2 vector, 1024d, 99 seed
 
@@ -89,17 +90,11 @@ fn test_quant_loss() {
     println!("MSE = {}", mse);
 
     let dot_f32 = unsafe { dot_product(vector1_f32, vector2_f32) };
-
-    let dot_i8: i32 = vector1_i8
-        .iter()
-        .zip(vector2_i8.iter())
-        .map(|(&x, &y)| (x as i32) * (y as i32))
-        .sum();
-
+    let dot_i8: f32 = unsafe { dot_product_i8(&vector1_i8, &vector2_i8) };
     let dequant_f32 = unsafe { dot_product(&vector1_dequant, &vector2_dequant) };
 
     println!("F32      = {}", dot_f32);
-    println!("I8       = {}", dot_i8 as f32 * scale1 * scale2);
+    println!("I8       = {}", dot_i8 * scale1 * scale2);
     println!("Recovered = {}", dequant_f32);
     println!("Diff       = {}", (dot_f32 - dequant_f32).abs());
 }

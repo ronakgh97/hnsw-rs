@@ -1,11 +1,11 @@
 use crate::prelude::*;
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Trait for storing item behavior and similarity/distance computation in [HNSW],
+/// Trait for storing item behavior and similarity/distance computation in [`HNSW`],
 /// it handles & abstracts away all the internal graph logic,
-/// BUT DOES NOT HANDLE DATA Manipulation, ONLY STORE THE [ItemBackend] along with "GRAPH" overhead.
-/// Implementor need to use internal/external storage for retriving, pushing data and `distance` computation so HNSW can read/modify them,
-/// and maybe use [wincode](https://crates.io/crates/wincode) derive macro [SchemaWrite] & [SchemaRead] for serialization/deserialization support if needed.
+/// BUT DOES NOT HANDLE DATA Manipulation, ONLY STORE THE [`ItemBackend`] along with "GRAPH" overhead.
+/// Implementor need to use internal/external storage for retriving, pushing data and _distance_ computation so HNSW can read/modify them,
+/// and maybe use [`wincode`](https://crates.io/crates/wincode) derive macro [`SchemaWrite`] & [`SchemaRead`] for serialization/deserialization support if needed.
 ///
 /// # Implementation example
 ///
@@ -87,6 +87,9 @@ pub trait ItemBackend: Send + Sync {
 
 /// Convenience type alias for vector optimized HNSW.
 pub type VectorHnsw = HNSW<FlatVectorStore>;
+
+/// Convenience type alias for 8-bit quantized vector HNSW.
+pub type Vector8bitHnsw = HNSW<FlatI8VectorStore>;
 
 /// A flat vector store that holds 32-bit vectors in a contiguous memory layout.
 /// This implements [ItemBackend] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for vector search ops.
@@ -184,6 +187,124 @@ impl ItemBackend for FlatVectorStore {
             Metrics::Cosine => 1.0 - unsafe { dot_product(item0, item1) },
             Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity(item0, item1) - 1.0) },
             Metrics::RawDot => -unsafe { dot_product(item0, item1) },
+        }
+    }
+}
+
+/// A flat vector store that holds 8-bit quantized vectors in a contiguous memory layout.
+/// This implements [ItemBackend] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for quantized vector search ops.
+///
+/// Quantized vectors should be produced via [`crate::quant::quant`] before insertion/search.
+/// Similarity and distance operate directly on `i8` data using SIMD-optimized functions from [`crate::vector`].
+///
+/// Uses ~4x less memory than [`FlatVectorStore`] (1 byte per element vs 4 bytes).
+///
+/// # Usage
+///```rust
+/// use hnsw_rs::prelude::*;
+///
+/// let dim = 128;
+/// let store = FlatI8VectorStore::init(dim, Metrics::Cosine, 100_000);
+/// let mut hnsw = HNSW::new(store, 16, 200, 12, 1.0 / (16.0_f32).ln(), 100_000, true, true);
+///
+/// // quantize before inserting
+/// let mut f32_vec = vec![0.0f32; dim];
+/// let mut i8_vec = vec![0i8; dim];
+/// let _scale = hnsw_rs::quant::quant(&f32_vec, &mut i8_vec);
+///
+/// let mut uuid = [0u8; 32];
+/// fastrand::fill(&mut uuid);
+///
+/// let level = hnsw.get_random_level();
+/// hnsw.insert(uuid, &mut i8_vec, vec![], level).unwrap();
+///```
+#[derive(SchemaRead, SchemaWrite)]
+pub struct FlatI8VectorStore {
+    flat_vectors: Vec<i8>,
+    dim: usize,
+    metric: Metrics,
+}
+
+impl FlatI8VectorStore {
+    /// Initialize a new FlatI8VectorStore with specified metric, dimension, and pre-alloc capacity.
+    pub fn init(dim: usize, metric: Metrics, with_capacity: usize) -> Self {
+        assert!(dim > 0, "Dimension must be greater than zero");
+        Self {
+            flat_vectors: Vec::with_capacity(with_capacity * dim),
+            dim,
+            metric,
+        }
+    }
+}
+
+impl Default for FlatI8VectorStore {
+    /// Default initialization with Cosine metric, 1024 dimensions, and ~255k vector capacity.
+    fn default() -> Self {
+        let dim = 1024;
+        let metric = Metrics::Cosine;
+        let capacity = 255_000;
+        Self {
+            flat_vectors: Vec::with_capacity(dim * capacity),
+            dim,
+            metric,
+        }
+    }
+}
+
+impl ItemBackend for FlatI8VectorStore {
+    type Item = [i8];
+
+    #[inline(always)]
+    fn validate_item(&self, item: &[i8]) -> bool {
+        item.len() == self.dim
+    }
+
+    #[inline(always)]
+    fn search_modify(&self, _item: &mut [i8]) {}
+
+    #[inline(always)]
+    fn insert_modify(&mut self, item: &mut [i8]) {
+        self.flat_vectors.extend_from_slice(item);
+    }
+
+    #[inline(always)]
+    fn get(&self, idx: NodeIndex) -> &[i8] {
+        let start = idx * self.dim;
+        unsafe { self.flat_vectors.get_unchecked(start..start + self.dim) }
+    }
+
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.flat_vectors.len() / self.dim
+    }
+
+    #[inline(always)]
+    fn is_empty(&self) -> bool {
+        self.flat_vectors.is_empty()
+    }
+
+    #[inline(always)]
+    fn mem_size(&self) -> usize {
+        self.flat_vectors.len()
+    }
+
+    #[inline(always)]
+    fn similarity(&self, a: &[i8], b: &[i8]) -> f32 {
+        unsafe {
+            match self.metric {
+                Metrics::Cosine => cosine_similarity_i8(a, b),
+                Metrics::RawDot => dot_product_i8(a, b),
+                Metrics::Euclidean => euclidean_similarity_i8(a, b),
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn distance(&self, a: &[i8], b: &[i8]) -> f32 {
+        match self.metric {
+            Metrics::Cosine => 1.0 - unsafe { cosine_similarity_i8(a, b) },
+            Metrics::RawDot => -unsafe { dot_product_i8(a, b) },
+            Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity_i8(a, b) - 1.0) },
         }
     }
 }

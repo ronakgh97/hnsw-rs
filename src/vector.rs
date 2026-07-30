@@ -154,144 +154,77 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-/// SIMD-optimized cosine similarity for i8 vectors, use this for raw, un-normalized 128 vectors.
+/// SIMD-optimized cosine similarity for i8 vectors: `dot / sqrt(norm_a * norm_b)`
 /// Safety: No bound/length checks
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
-    const LANES: usize = 4 * 32;
+    const LANES: usize = 32;
 
     let chunks = a.len() / LANES;
 
-    // TODO: holy Reggie Star
-    let mut dot0 = i32x8::ZERO;
-    let mut dot1 = i32x8::ZERO;
-    let mut dot2 = i32x8::ZERO;
-    let mut dot3 = i32x8::ZERO;
-
-    let mut na0 = i32x8::ZERO;
-    let mut na1 = i32x8::ZERO;
-    let mut na2 = i32x8::ZERO;
-    let mut na3 = i32x8::ZERO;
-
-    let mut nb0 = i32x8::ZERO;
-    let mut nb1 = i32x8::ZERO;
-    let mut nb2 = i32x8::ZERO;
-    let mut nb3 = i32x8::ZERO;
+    let mut dot_acc = i32x8::ZERO;
+    let mut na_acc = i32x8::ZERO;
+    let mut nb_acc = i32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
-    // process 128 element per iter
-    // (4 * 32-lane vectors)
     for i in 0..chunks {
         let offset = i * LANES;
 
         unsafe {
-            // Load 4 i8x32 registers from a
-            let va0_ptr = a_ptr.add(offset);
-            let va1_ptr = a_ptr.add(offset + 32);
-            let va2_ptr = a_ptr.add(offset + 64);
-            let va3_ptr = a_ptr.add(offset + 96);
+            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
+            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
 
-            // Load 4 i8x32 registers from b
-            let vb0_ptr = b_ptr.add(offset);
-            let vb1_ptr = b_ptr.add(offset + 32);
-            let vb2_ptr = b_ptr.add(offset + 64);
-            let vb3_ptr = b_ptr.add(offset + 96);
+            let (a0, a1, a2, a3) = unpack(va);
+            let (b0, b1, b2, b3) = unpack(vb);
 
-            let va0 = i8x32::from(read_unaligned(va0_ptr as *const [i8; 32]));
-            let va1 = i8x32::from(read_unaligned(va1_ptr as *const [i8; 32]));
-            let va2 = i8x32::from(read_unaligned(va2_ptr as *const [i8; 32]));
-            let va3 = i8x32::from(read_unaligned(va3_ptr as *const [i8; 32]));
-
-            let vb0 = i8x32::from(read_unaligned(vb0_ptr as *const [i8; 32]));
-            let vb1 = i8x32::from(read_unaligned(vb1_ptr as *const [i8; 32]));
-            let vb2 = i8x32::from(read_unaligned(vb2_ptr as *const [i8; 32]));
-            let vb3 = i8x32::from(read_unaligned(vb3_ptr as *const [i8; 32]));
-
-            // Unpack each i8x32 into four i32x8 parts (damn this slow)
-            let (va00, va01, va02, va03) = unpack(va0);
-            let (va10, va11, va12, va13) = unpack(va1);
-            let (va20, va21, va22, va23) = unpack(va2);
-            let (va30, va31, va32, va33) = unpack(va3);
-
-            let (vb00, vb01, vb02, vb03) = unpack(vb0);
-            let (vb10, vb11, vb12, vb13) = unpack(vb1);
-            let (vb20, vb21, vb22, vb23) = unpack(vb2);
-            let (vb30, vb31, vb32, vb33) = unpack(vb3);
-
-            // dot
-            dot0 += va00 * vb00 + va01 * vb01 + va02 * vb02 + va03 * vb03;
-            dot1 += va10 * vb10 + va11 * vb11 + va12 * vb12 + va13 * vb13;
-            dot2 += va20 * vb20 + va21 * vb21 + va22 * vb22 + va23 * vb23;
-            dot3 += va30 * vb30 + va31 * vb31 + va32 * vb32 + va33 * vb33;
-
-            // norm A
-            na0 += va00 * va00 + va01 * va01 + va02 * va02 + va03 * va03;
-            na1 += va10 * va10 + va11 * va11 + va12 * va12 + va13 * va13;
-            na2 += va20 * va20 + va21 * va21 + va22 * va22 + va23 * va23;
-            na3 += va30 * va30 + va31 * va31 + va32 * va32 + va33 * va33;
-
-            // norm B
-            nb0 += vb00 * vb00 + vb01 * vb01 + vb02 * vb02 + vb03 * vb03;
-            nb1 += vb10 * vb10 + vb11 * vb11 + vb12 * vb12 + vb13 * vb13;
-            nb2 += vb20 * vb20 + vb21 * vb21 + vb22 * vb22 + vb23 * vb23;
-            nb3 += vb30 * vb30 + vb31 * vb31 + vb32 * vb32 + vb33 * vb33;
+            dot_acc += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3;
+            na_acc += a0 * a0 + a1 * a1 + a2 * a2 + a3 * a3;
+            nb_acc += b0 * b0 + b1 * b1 + b2 * b2 + b3 * b3;
         }
     }
 
-    let mut dot = dot0.reduce_add() + dot1.reduce_add() + dot2.reduce_add() + dot3.reduce_add();
+    let mut dot = dot_acc.reduce_add();
+    let mut norm_a = na_acc.reduce_add();
+    let mut norm_b = nb_acc.reduce_add();
 
-    let mut norm_a = na0.reduce_add() + na1.reduce_add() + na2.reduce_add() + na3.reduce_add();
-
-    let mut norm_b = nb0.reduce_add() + nb1.reduce_add() + nb2.reduce_add() + nb3.reduce_add();
-
-    // remainders (less than 128 elements)
     let remainder_start = chunks * LANES;
-    let mut dot_rem: i32 = 0;
-    let mut na_rem: i32 = 0;
-    let mut nb_rem: i32 = 0;
     for i in remainder_start..a.len() {
         let ai = a[i] as i32;
         let bi = b[i] as i32;
-        dot_rem += ai * bi;
-        na_rem += ai * ai;
-        nb_rem += bi * bi;
+        dot += ai * bi;
+        norm_a += ai * ai;
+        norm_b += bi * bi;
     }
-    dot += dot_rem;
-    norm_a += na_rem;
-    norm_b += nb_rem;
 
-    // div check
-    let dot = dot as f64;
-    let na = norm_a as f64;
-    let nb = norm_b as f64;
-    let denominator = (na * nb).sqrt();
+    let dot = dot as f32;
+    let denominator = (norm_a as f32 * norm_b as f32).sqrt();
 
-    if denominator < f64::EPSILON {
+    if denominator < f32::EPSILON {
         0.0
     } else {
-        (dot / denominator) as f32
+        dot / denominator
     }
 }
 
 /// SIMD-optimized L1-normalize a f32 vector slice in-place
 #[inline(always)]
 pub fn normalize_l1(v: &mut [f32]) {
-    const LANE: usize = 4 * 8;
+    const LANES: usize = 4 * 8;
     // TODO: this is scalar, how lame ;(
     let norm: f32 = v.iter().map(|x| x.abs()).sum();
 
     unsafe {
         if norm > f32::EPSILON {
-            let chunks = v.len() / LANE;
+            let chunks = v.len() / LANES;
             let inv = 1.0 / norm;
             let inv_v = f32x8::splat(inv);
             let ptr = v.as_mut_ptr();
 
             for i in 0..chunks {
-                let offset = i * LANE;
+                let offset = i * LANES;
                 let p = ptr.add(offset);
 
                 let v0 = f32x8::from(read_unaligned(p as *const [f32; 8]));
@@ -305,7 +238,7 @@ pub fn normalize_l1(v: &mut [f32]) {
                 write_unaligned(p.add(24) as *mut [f32; 8], (v3 * inv_v).into());
             }
 
-            let remainder = chunks * LANE;
+            let remainder = chunks * LANES;
             for i in remainder..v.len() {
                 *v.get_unchecked_mut(i) *= inv;
             }
@@ -316,17 +249,18 @@ pub fn normalize_l1(v: &mut [f32]) {
 /// L2-normalize a f32 vector slice in-place
 #[inline(always)]
 pub fn normalize_l2(v: &mut [f32]) {
-    const LANE: usize = 32;
+    const LANES: usize = 4 * 8;
+
     unsafe {
         let dot_prod_norm = dot_product(v, v);
         if dot_prod_norm > f32::EPSILON {
-            let chunks = v.len() / LANE;
+            let chunks = v.len() / LANES;
             let inv = 1.0 / dot_prod_norm.sqrt();
             let inv_v = f32x8::splat(inv);
             let ptr = v.as_mut_ptr();
 
             for i in 0..chunks {
-                let offset = i * LANE;
+                let offset = i * LANES;
                 let p = ptr.add(offset);
 
                 let v0 = f32x8::from(read_unaligned(p as *const [f32; 8]));
@@ -340,7 +274,7 @@ pub fn normalize_l2(v: &mut [f32]) {
                 write_unaligned(p.add(24) as *mut [f32; 8], (v3 * inv_v).into());
             }
 
-            let remainder = chunks * LANE;
+            let remainder = chunks * LANES;
             for i in remainder..v.len() {
                 *v.get_unchecked_mut(i) *= inv;
             }
@@ -353,7 +287,7 @@ pub fn normalize_l2(v: &mut [f32]) {
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    const LANES: usize = 32;
+    const LANES: usize = 4 * 8;
 
     let chunks = a.len() / LANES;
 
@@ -412,96 +346,30 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
-    const LANES: usize = 4 * 32;
+    const LANES: usize = 32;
 
     let chunks = a.len() / LANES;
-
-    // TODO: holy Reggie Star
-    let mut dot0 = i32x8::ZERO;
-    let mut dot1 = i32x8::ZERO;
-    let mut dot2 = i32x8::ZERO;
-    let mut dot3 = i32x8::ZERO;
-
-    let mut na0 = i32x8::ZERO;
-    let mut na1 = i32x8::ZERO;
-    let mut na2 = i32x8::ZERO;
-    let mut na3 = i32x8::ZERO;
-
-    let mut nb0 = i32x8::ZERO;
-    let mut nb1 = i32x8::ZERO;
-    let mut nb2 = i32x8::ZERO;
-    let mut nb3 = i32x8::ZERO;
+    let mut acc = i32x8::ZERO;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
-    // process 128 element per iter
-    // (4 * 32-lane vectors)
     for i in 0..chunks {
         let offset = i * LANES;
 
         unsafe {
-            // Load 4 i8x32 registers from a
-            let va0_ptr = a_ptr.add(offset);
-            let va1_ptr = a_ptr.add(offset + 32);
-            let va2_ptr = a_ptr.add(offset + 64);
-            let va3_ptr = a_ptr.add(offset + 96);
+            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
+            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
 
-            // Load 4 i8x32 registers from b
-            let vb0_ptr = b_ptr.add(offset);
-            let vb1_ptr = b_ptr.add(offset + 32);
-            let vb2_ptr = b_ptr.add(offset + 64);
-            let vb3_ptr = b_ptr.add(offset + 96);
+            let (a0, a1, a2, a3) = unpack(va);
+            let (b0, b1, b2, b3) = unpack(vb);
 
-            let va0 = i8x32::from(read_unaligned(va0_ptr as *const [i8; 32]));
-            let va1 = i8x32::from(read_unaligned(va1_ptr as *const [i8; 32]));
-            let va2 = i8x32::from(read_unaligned(va2_ptr as *const [i8; 32]));
-            let va3 = i8x32::from(read_unaligned(va3_ptr as *const [i8; 32]));
-
-            let vb0 = i8x32::from(read_unaligned(vb0_ptr as *const [i8; 32]));
-            let vb1 = i8x32::from(read_unaligned(vb1_ptr as *const [i8; 32]));
-            let vb2 = i8x32::from(read_unaligned(vb2_ptr as *const [i8; 32]));
-            let vb3 = i8x32::from(read_unaligned(vb3_ptr as *const [i8; 32]));
-
-            // Unpack each i8x32 into four i32x8 parts (damn this slow)
-            let (va00, va01, va02, va03) = unpack(va0);
-            let (va10, va11, va12, va13) = unpack(va1);
-            let (va20, va21, va22, va23) = unpack(va2);
-            let (va30, va31, va32, va33) = unpack(va3);
-
-            let (vb00, vb01, vb02, vb03) = unpack(vb0);
-            let (vb10, vb11, vb12, vb13) = unpack(vb1);
-            let (vb20, vb21, vb22, vb23) = unpack(vb2);
-            let (vb30, vb31, vb32, vb33) = unpack(vb3);
-
-            // dot
-            dot0 += va00 * vb00 + va01 * vb01 + va02 * vb02 + va03 * vb03;
-            dot1 += va10 * vb10 + va11 * vb11 + va12 * vb12 + va13 * vb13;
-            dot2 += va20 * vb20 + va21 * vb21 + va22 * vb22 + va23 * vb23;
-            dot3 += va30 * vb30 + va31 * vb31 + va32 * vb32 + va33 * vb33;
-
-            // norm A
-            na0 += va00 * va00 + va01 * va01 + va02 * va02 + va03 * va03;
-            na1 += va10 * va10 + va11 * va11 + va12 * va12 + va13 * va13;
-            na2 += va20 * va20 + va21 * va21 + va22 * va22 + va23 * va23;
-            na3 += va30 * va30 + va31 * va31 + va32 * va32 + va33 * va33;
-
-            // norm B
-            nb0 += vb00 * vb00 + vb01 * vb01 + vb02 * vb02 + vb03 * vb03;
-            nb1 += vb10 * vb10 + vb11 * vb11 + vb12 * vb12 + vb13 * vb13;
-            nb2 += vb20 * vb20 + vb21 * vb21 + vb22 * vb22 + vb23 * vb23;
-            nb3 += vb30 * vb30 + vb31 * vb31 + vb32 * vb32 + vb33 * vb33;
+            acc += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3;
         }
     }
 
-    #[rustfmt::skip]
-    let mut total_sum =
-        dot0.reduce_add()
-        + dot1.reduce_add()
-        + dot2.reduce_add()
-        + dot3.reduce_add();
+    let mut total_sum = acc.reduce_add();
 
-    // handle remainder
     let remainder_start = chunks * LANES;
     for i in remainder_start..a.len() {
         total_sum += (a[i] as i32) * (b[i] as i32);
@@ -515,8 +383,8 @@ pub unsafe fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
-    const LANE: usize = 32;
-    let chunks = a.len() / LANE;
+    const LANES: usize = 4 * 8;
+    let chunks = a.len() / LANES;
 
     let mut sumsq0 = f32x8::ZERO;
     let mut sumsq1 = f32x8::ZERO;
@@ -527,7 +395,7 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * LANE;
+        let offset = i * LANES;
         unsafe {
             let va0_ptr = a_ptr.add(offset);
             let va1_ptr = a_ptr.add(offset + 8);
@@ -565,10 +433,53 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     let mut dist = f32x8::reduce_add((sumsq0 + sumsq1) + (sumsq2 + sumsq3));
 
     // handle remainder
-    let remainder_start = chunks * LANE;
+    let remainder_start = chunks * LANES;
     for i in remainder_start..a.len() {
         let diff = a[i] - b[i];
         dist = diff.mul_add(diff, dist);
+    }
+
+    1.0 / (1.0 + dist.sqrt())
+}
+
+/// SIMD-optimized Euclidean similarity i8 vectors: `1.0 / (1.0 + sqrt(sum_of_squared_diffs))`
+/// Safety: No bound/length checks
+#[inline(always)]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
+    const LANES: usize = 32;
+    let chunks = a.len() / LANES;
+
+    let mut acc = i32x8::ZERO;
+
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+
+    for i in 0..chunks {
+        let offset = i * LANES;
+
+        unsafe {
+            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
+            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
+
+            let (a0, a1, a2, a3) = unpack(va);
+            let (b0, b1, b2, b3) = unpack(vb);
+
+            let d0 = a0 - b0;
+            let d1 = a1 - b1;
+            let d2 = a2 - b2;
+            let d3 = a3 - b3;
+
+            acc += d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+        }
+    }
+
+    let mut dist = acc.reduce_add() as f32;
+
+    let remainder_start = chunks * LANES;
+    for i in remainder_start..a.len() {
+        let d = a[i] as i32 - b[i] as i32;
+        dist += (d * d) as f32;
     }
 
     1.0 / (1.0 + dist.sqrt())

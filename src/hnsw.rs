@@ -145,7 +145,8 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///use hnsw_rs::prelude::*;
 ///
 /// fn main() {
-/// let mut hnsw = VectorHnsw::default(); // HNSW<FlatVectorStore>::default()
+///    let mut hnsw = VectorHnsw::default(); // HNSW<FlatVectorStore>::default()
+///    let _quant_hnsw = Vector8bitHnsw::default(); // HNSW<FlatVector8bitStore>::default()
 ///
 ///    let (mut vectors, _seed) = gen_vec(10, 1024, 0); // vectors=10 d=1024 seed=0
 ///

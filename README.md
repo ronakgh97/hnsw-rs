@@ -1,22 +1,20 @@
 **Generic** implementation of **HNSW (Hierarchical Navigable Small World)** algorithm for approximate nearest neighbor
-search.
-This is pretty much ["paper-compliant"](https://arxiv.org/pdf/1603.09320), its simplified, well documentated and easy to
-understand & reason, while still being _reasonably_ efficient and robust, I guess.
-Its can be used to `nearest-search` in _any SPACE_ with given distance valid metric,
-for examples: vector, string, locations, image, audio, bioinformatics etc.
+search. This is pretty much ["paper-compliant"](https://arxiv.org/pdf/1603.09320), its simplified, well documentated and
+easy to understand & reason, while still being _reasonably_ efficient and robust, I guess. Its can be used to
+`nearest-search` in _any SPACE_ with given distance valid metric, for examples: vector, string, locations, image, audio,
+bioinformatics etc.
 
-Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), [ARCHIVED/ABANDON] which is a vector database
-built on
-top of this HNSW implementation.
+Checkout this repo: [blaze-db](https://github.com/ronakgh97/blaze-db), [ARCHIVED/ABANDON]
+a vector database built on top of this HNSW implementation.
 
 **How to bench**?
 
-Make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M),
-and also change [build config](.cargo/config.toml).
+Make sure to have cargo & this [dataset](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M), and also
+change [build config](.cargo/config.toml).
 
 ```shell
 cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
-                                         <path to dataset> <num of files to read>
+                              <path to dataset> <num of files to read>
 ```
 
 ```shell
