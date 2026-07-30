@@ -99,7 +99,7 @@ fn test_metrics_enum_cosine() {
     let metric = Metrics::Cosine;
     let a = vec![1.0, 0.0];
     let b = vec![1.0, 0.0];
-    let sim = metric.calculate(&a, &b);
+    let sim = metric.calculate_f32(&a, &b);
     assert!((sim - 1.0).abs() < 1e-6);
 }
 
@@ -108,7 +108,7 @@ fn test_metrics_enum_euclidean() {
     let metric = Metrics::Euclidean;
     let a = vec![0.0, 0.0];
     let b = vec![3.0, 4.0];
-    let sim = metric.calculate(&a, &b);
+    let sim = metric.calculate_f32(&a, &b);
     assert!((sim - (1.0 / 6.0)).abs() < 1e-6);
 }
 
@@ -117,7 +117,7 @@ fn test_metrics_enum_dot_product() {
     let metric = Metrics::RawDot;
     let a = vec![2.0, 3.0];
     let b = vec![4.0, 5.0];
-    let sim = metric.calculate(&a, &b);
+    let sim = metric.calculate_f32(&a, &b);
     assert!((sim - 23.0).abs() < 1e-6);
 }
 
