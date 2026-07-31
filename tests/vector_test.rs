@@ -1,6 +1,6 @@
 use hnsw_rs::prelude::*;
 
-// TODO; AI-generated tests
+// TODO; These are AI-generated tests
 
 #[test]
 fn test_cosine_similarity_identical_vectors() {

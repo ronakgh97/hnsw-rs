@@ -2,7 +2,9 @@ use std::ptr::{read_unaligned, write_unaligned};
 use wide::{f32x8, i8x32, i32x8};
 use wincode::{SchemaRead, SchemaWrite};
 
+// TODO; THIS IS REALLLLYYYY SLOW, WIDE CRATE IS SLOW
 #[inline(always)]
+/// Unpack an i8x32 vector into four i32x8 vectors
 fn unpack(v: i8x32) -> (i32x8, i32x8, i32x8, i32x8) {
     let a = v.to_array();
 
@@ -57,7 +59,16 @@ impl Metrics {
         }
     }
 
-    // pub fn calculate_i8(&self, a: &[i8], b: &[i8]) -> i8 {}
+    /// Calculate similarity between two i8 vectors based on the selected metric.
+    /// Both slices must have the same length or get UB ;/
+    #[inline]
+    pub fn calculate_i8(&self, a: &[i8], b: &[i8]) -> f32 {
+        match self {
+            Metrics::Cosine => unsafe { cosine_similarity_i8(a, b) },
+            Metrics::Euclidean => unsafe { euclidean_similarity_i8(a, b) },
+            Metrics::RawDot => unsafe { dot_product_i8(a, b) },
+        }
+    }
 
     /// Get string representation for logging/debugging
     #[inline]
@@ -146,8 +157,9 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         nb_sum = b[i].mul_add(b[i], nb_sum);
     }
 
+    // div check
     let denominator = (na_sum * nb_sum).sqrt();
-    if denominator < f32::EPSILON {
+    if denominator < 1e-12 {
         0.0
     } else {
         dot_sum / denominator
@@ -202,7 +214,7 @@ pub unsafe fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     let dot = dot as f32;
     let denominator = (norm_a as f32 * norm_b as f32).sqrt();
 
-    if denominator < f32::EPSILON {
+    if denominator < 1e-12 {
         0.0
     } else {
         dot / denominator
@@ -217,7 +229,7 @@ pub fn normalize_l1(v: &mut [f32]) {
     let norm: f32 = v.iter().map(|x| x.abs()).sum();
 
     unsafe {
-        if norm > f32::EPSILON {
+        if norm > 1e-12 {
             let chunks = v.len() / LANES;
             let inv = 1.0 / norm;
             let inv_v = f32x8::splat(inv);
@@ -253,7 +265,7 @@ pub fn normalize_l2(v: &mut [f32]) {
 
     unsafe {
         let dot_prod_norm = dot_product(v, v);
-        if dot_prod_norm > f32::EPSILON {
+        if dot_prod_norm > 1e-12 {
             let chunks = v.len() / LANES;
             let inv = 1.0 / dot_prod_norm.sqrt();
             let inv_v = f32x8::splat(inv);
@@ -442,7 +454,7 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     1.0 / (1.0 + dist.sqrt())
 }
 
-/// SIMD-optimized Euclidean similarity i8 vectors: `1.0 / (1.0 + sqrt(sum_of_squared_diffs))`
+/// SIMD-optimized Euclidean similarity i8 vectors
 /// Safety: No bound/length checks
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
@@ -695,7 +707,7 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
     //     );
     // }
 
-    const TILE: usize = 64;
+    const TILE: usize = 128;
 
     for ii in (0..rows).step_by(TILE) {
         for jj in (0..cols).step_by(TILE) {
@@ -716,44 +728,97 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
 
 #[test]
 fn test_maths() {
-    use crate::utils::gen_vec;
+    use crate::quant::quant;
+    use crate::utils::VectorGen;
     use std::hint::black_box;
     use std::time::Instant;
-    let run = 4096;
-    let dim = 2512;
 
-    let (vec, _seed) = gen_vec(6, dim, 42);
+    let run = 4096;
+    let dim = 3072;
+
+    let vg = VectorGen::generate(6, dim, Some(42));
 
     let strt = Instant::now();
     for _ in 0..run {
         unsafe {
-            black_box(dot_product(&vec[0], &vec[1]));
+            black_box(dot_product(vg.get(0), vg.get(1)));
         }
     }
     let elapsed = strt.elapsed();
 
     let gflops = 2.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
-    println!("Dot product: {:?}, GLOPS: {}", elapsed, gflops);
+    println!("Dot product: {:?}, GFLOPS: {}", elapsed, gflops);
+
+    let mut quant0 = vec![0i8; dim];
+    quant(vg.get(0), &mut quant0);
+
+    let mut quant1 = vec![0i8; dim];
+    quant(vg.get(1), &mut quant1);
 
     let strt = Instant::now();
     for _ in 0..run {
         unsafe {
-            black_box(cosine_similarity(&vec[2], &vec[3]));
+            black_box(dot_product_i8(&quant0, &quant1));
+        }
+    }
+    let elapsed = strt.elapsed();
+
+    let gops = 2.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
+    println!("Dot product (I8): {:?}, GOPS: {}", elapsed, gops);
+
+    let strt = Instant::now();
+    for _ in 0..run {
+        unsafe {
+            black_box(cosine_similarity(vg.get(2), vg.get(3)));
         }
     }
     let elapsed = strt.elapsed();
 
     let gflops = 6.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
-    println!("Cosine similarity: {:?}, GLOPS: {}", elapsed, gflops);
+    println!("Cosine similarity: {:?}, GFLOPS: {}", elapsed, gflops);
+
+    let mut quant2 = vec![0i8; dim];
+    quant(vg.get(2), &mut quant2);
+
+    let mut quant3 = vec![0i8; dim];
+    quant(vg.get(3), &mut quant3);
 
     let strt = Instant::now();
     for _ in 0..run {
         unsafe {
-            black_box(euclidean_similarity(&vec[4], &vec[5]));
+            black_box(cosine_similarity_i8(&quant2, &quant3));
+        }
+    }
+    let elapsed = strt.elapsed();
+
+    let gops = 6.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
+    println!("Cosine similarity (I8): {:?}, GOPS: {}", elapsed, gops);
+
+    let strt = Instant::now();
+    for _ in 0..run {
+        unsafe {
+            black_box(euclidean_similarity(vg.get(4), vg.get(5)));
         }
     }
     let elapsed = strt.elapsed();
 
     let gflops = 3.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
-    println!("Euclidean similarity: {:?}, GLOPS: {}", elapsed, gflops);
+    println!("Euclidean similarity: {:?}, GFLOPS: {}", elapsed, gflops);
+
+    let mut quant4 = vec![0i8; dim];
+    quant(vg.get(4), &mut quant4);
+
+    let mut quant5 = vec![0i8; dim];
+    quant(vg.get(5), &mut quant5);
+
+    let strt = Instant::now();
+    for _ in 0..run {
+        unsafe {
+            black_box(euclidean_similarity_i8(&quant4, &quant5));
+        }
+    }
+    let elapsed = strt.elapsed();
+
+    let gops = 3.0 * (dim as f64) / elapsed.as_secs_f64() / 1e9 * run as f64;
+    println!("Euclidean similarity (I8): {:?}, GOPS: {}", elapsed, gops);
 }
