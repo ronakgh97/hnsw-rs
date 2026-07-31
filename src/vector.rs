@@ -1,39 +1,6 @@
 use std::ptr::{read_unaligned, write_unaligned};
-use wide::{f32x8, i8x32, i32x8};
+use wide::f32x8;
 use wincode::{SchemaRead, SchemaWrite};
-
-// TODO; THIS IS REALLLLYYYY SLOW, WIDE CRATE IS SLOW
-#[inline(always)]
-/// Unpack an i8x32 vector into four i32x8 vectors
-fn unpack(v: i8x32) -> (i32x8, i32x8, i32x8, i32x8) {
-    let a = v.to_array();
-
-    #[rustfmt::skip]
-    let a0 = i32x8::from([
-        a[0] as i32, a[1] as i32, a[2] as i32, a[3] as i32,
-        a[4] as i32, a[5] as i32, a[6] as i32, a[7] as i32,
-    ]);
-
-    #[rustfmt::skip]
-    let a1 = i32x8::from([
-        a[8] as i32, a[9] as i32, a[10] as i32, a[11] as i32,
-        a[12] as i32, a[13] as i32, a[14] as i32, a[15] as i32,
-    ]);
-
-    #[rustfmt::skip]
-    let a2 = i32x8::from([
-        a[16] as i32, a[17] as i32, a[18] as i32, a[19] as i32,
-        a[20] as i32, a[21] as i32, a[22] as i32, a[23] as i32,
-    ]);
-
-    #[rustfmt::skip]
-    let a3 = i32x8::from([
-        a[24] as i32, a[25] as i32, a[26] as i32, a[27] as i32,
-        a[28] as i32, a[29] as i32, a[30] as i32, a[31] as i32,
-    ]);
-
-    (a0, a1, a2, a3)
-}
 
 /// Supported similarity metrics for vector search.
 /// Internally uses SIMD-optimized implementations from this module.
@@ -76,13 +43,13 @@ impl Metrics {
         match self {
             Metrics::Cosine => "COSINE".to_string(),
             Metrics::Euclidean => "EUCLIDEAN".to_string(),
-            Metrics::RawDot => "DOT_PRODUCT".to_string(),
+            Metrics::RawDot => "DOT".to_string(),
         }
     }
 }
 
-/// SIMD-optimized cosine similarity, use this for raw, un-normalized 32 vectors.
-/// Safety: No bound/length checks
+/// SIMD-optimized cosine similarity, use this for raw, un-normalized f32 vectors,
+/// Safety: No bound/length checks, vector slices len must match
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -166,54 +133,86 @@ pub unsafe fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-/// SIMD-optimized cosine similarity for i8 vectors: `dot / sqrt(norm_a * norm_b)`
-/// Safety: No bound/length checks
+/// Cosine similarity for i8 vectors, does not use SIMD, `LLVM` will optimize it for your target,
+/// Safety: No bound/length checks, vector slices len must match
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
-    const LANES: usize = 32;
+    // 4 element per iter, allow some of level of ILP
+    const UNROLL: usize = 4;
+    let chunks = a.len() / UNROLL;
 
-    let chunks = a.len() / LANES;
+    let mut dot0 = 0;
+    let mut dot1 = 0;
+    let mut dot2 = 0;
+    let mut dot3 = 0;
 
-    let mut dot_acc = i32x8::ZERO;
-    let mut na_acc = i32x8::ZERO;
-    let mut nb_acc = i32x8::ZERO;
+    let mut norma0 = 0;
+    let mut norma1 = 0;
+    let mut norma2 = 0;
+    let mut norma3 = 0;
+
+    let mut normb0 = 0;
+    let mut normb1 = 0;
+    let mut normb2 = 0;
+    let mut normb3 = 0;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * LANES;
-
+        let idx = i * UNROLL;
         unsafe {
-            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
-            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
+            let x0 = *a_ptr.add(idx) as i32;
+            let y0 = *b_ptr.add(idx) as i32;
 
-            let (a0, a1, a2, a3) = unpack(va);
-            let (b0, b1, b2, b3) = unpack(vb);
+            dot0 += x0 * y0;
+            norma0 += x0 * x0;
+            normb0 += y0 * y0;
 
-            dot_acc += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3;
-            na_acc += a0 * a0 + a1 * a1 + a2 * a2 + a3 * a3;
-            nb_acc += b0 * b0 + b1 * b1 + b2 * b2 + b3 * b3;
+            let x1 = *a_ptr.add(idx + 1) as i32;
+            let y1 = *b_ptr.add(idx + 1) as i32;
+
+            dot1 += x1 * y1;
+            norma1 += x1 * x1;
+            normb1 += y1 * y1;
+
+            let x2 = *a_ptr.add(idx + 2) as i32;
+            let y2 = *b_ptr.add(idx + 2) as i32;
+
+            dot2 += x2 * y2;
+            norma2 += x2 * x2;
+            normb2 += y2 * y2;
+
+            let x3 = *a_ptr.add(idx + 3) as i32;
+            let y3 = *b_ptr.add(idx + 3) as i32;
+
+            dot3 += x3 * y3;
+            norma3 += x3 * x3;
+            normb3 += y3 * y3;
         }
     }
 
-    let mut dot = dot_acc.reduce_add();
-    let mut norm_a = na_acc.reduce_add();
-    let mut norm_b = nb_acc.reduce_add();
+    let mut dot = dot0 + dot1 + dot2 + dot3;
+    let mut norma = norma0 + norma1 + norma2 + norma3;
+    let mut normb = normb0 + normb1 + normb2 + normb3;
 
-    let remainder_start = chunks * LANES;
-    for i in remainder_start..a.len() {
-        let ai = a[i] as i32;
-        let bi = b[i] as i32;
-        dot += ai * bi;
-        norm_a += ai * ai;
-        norm_b += bi * bi;
+    // handle rem
+    let reminder_start = chunks * UNROLL;
+    for i in reminder_start..a.len() {
+        unsafe {
+            let x = *a_ptr.add(i) as i32;
+            let y = *b_ptr.add(i) as i32;
+
+            dot += x * y;
+            norma += x * x;
+            normb += y * y;
+        }
     }
 
     let dot = dot as f32;
-    let denominator = (norm_a as f32 * norm_b as f32).sqrt();
-
+    // div check
+    let denominator = ((norma * normb) as f32).sqrt();
     if denominator < 1e-12 {
         0.0
     } else {
@@ -294,8 +293,8 @@ pub fn normalize_l2(v: &mut [f32]) {
     }
 }
 
-/// SIMD-optimized raw Dot product for f32 vectors
-/// Safety: No bound/length checks
+/// SIMD-optimized raw Dot product for f32 vectors,
+/// Safety: No bound/length checks, vector slices len must match
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
@@ -353,36 +352,51 @@ pub unsafe fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     total_sum
 }
 
-/// SIMD-optimized raw Dot product for i8 vectors
-/// Safety: No bound/length checks
-#[inline(always)]
+/// Raw dot product for i8 vectors, does not use SIMD, `LLVM` will optimize it for your target,
+/// Safety: No bound/length checks, vector slices len must match
+#[inline(never)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
-    const LANES: usize = 32;
+    const UNROLL: usize = 4;
+    let chunks = a.len() / UNROLL;
 
-    let chunks = a.len() / LANES;
-    let mut acc = i32x8::ZERO;
+    let mut acc = 0;
+    let mut acc1 = 0;
+    let mut acc2 = 0;
+    let mut acc3 = 0;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * LANES;
+        let idx = i * UNROLL;
 
         unsafe {
-            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
-            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
+            let va0 = *a_ptr.add(idx) as i32;
+            let vb0 = *b_ptr.add(idx) as i32;
 
-            let (a0, a1, a2, a3) = unpack(va);
-            let (b0, b1, b2, b3) = unpack(vb);
+            acc += va0 * vb0;
 
-            acc += a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3;
+            let va1 = *a_ptr.add(idx + 1) as i32;
+            let vb1 = *b_ptr.add(idx + 1) as i32;
+
+            acc1 += va1 * vb1;
+
+            let va2 = *a_ptr.add(idx + 2) as i32;
+            let vb2 = *b_ptr.add(idx + 2) as i32;
+
+            acc2 += va2 * vb2;
+
+            let va3 = *a_ptr.add(idx + 3) as i32;
+            let vb3 = *b_ptr.add(idx + 3) as i32;
+
+            acc3 += va3 * vb3;
         }
     }
 
-    let mut total_sum = acc.reduce_add();
+    let mut total_sum = acc + acc1 + acc2 + acc3;
 
-    let remainder_start = chunks * LANES;
+    let remainder_start = chunks * UNROLL;
     for i in remainder_start..a.len() {
         total_sum += (a[i] as i32) * (b[i] as i32);
     }
@@ -390,8 +404,8 @@ pub unsafe fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
     total_sum as f32
 }
 
-/// SIMD-optimized Euclidean similarity f32 vectors
-/// Safety: No bound/length checks
+/// SIMD-optimized Euclidean similarity f32 vectors,
+/// Safety: No bound/length checks, vector slices len must match
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -454,41 +468,52 @@ pub unsafe fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     1.0 / (1.0 + dist.sqrt())
 }
 
-/// SIMD-optimized Euclidean similarity i8 vectors
-/// Safety: No bound/length checks
+/// Euclidean similarity for i8 vectors, does not use SIMD, `LLVM` will optimize it for your target,
+/// Safety: No bound/length checks, vector slices len must match
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
-    const LANES: usize = 32;
-    let chunks = a.len() / LANES;
+    const UNROLL: usize = 4;
 
-    let mut acc = i32x8::ZERO;
+    let chunks = a.len() / UNROLL;
+
+    let mut acc = 0;
+    let mut acc1 = 0;
+    let mut acc2 = 0;
+    let mut acc3 = 0;
 
     let a_ptr = a.as_ptr();
     let b_ptr = b.as_ptr();
 
     for i in 0..chunks {
-        let offset = i * LANES;
+        let offset = i * UNROLL;
 
         unsafe {
-            let va = i8x32::from(read_unaligned(a_ptr.add(offset) as *const [i8; 32]));
-            let vb = i8x32::from(read_unaligned(b_ptr.add(offset) as *const [i8; 32]));
+            let va0 = *a_ptr.add(offset) as i32;
+            let va1 = *a_ptr.add(offset + 1) as i32;
+            let va2 = *a_ptr.add(offset + 2) as i32;
+            let va3 = *a_ptr.add(offset + 3) as i32;
 
-            let (a0, a1, a2, a3) = unpack(va);
-            let (b0, b1, b2, b3) = unpack(vb);
+            let vb0 = *b_ptr.add(offset) as i32;
+            let vb1 = *b_ptr.add(offset + 1) as i32;
+            let vb2 = *b_ptr.add(offset + 2) as i32;
+            let vb3 = *b_ptr.add(offset + 3) as i32;
 
-            let d0 = a0 - b0;
-            let d1 = a1 - b1;
-            let d2 = a2 - b2;
-            let d3 = a3 - b3;
+            let d0 = va0 - vb0;
+            let d1 = va1 - vb1;
+            let d2 = va2 - vb2;
+            let d3 = va3 - vb3;
 
-            acc += d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+            acc += d0 * d0;
+            acc1 += d1 * d1;
+            acc2 += d2 * d2;
+            acc3 += d3 * d3;
         }
     }
 
-    let mut dist = acc.reduce_add() as f32;
+    let mut dist = (acc + acc1 + acc2 + acc3) as f32;
 
-    let remainder_start = chunks * LANES;
+    let remainder_start = chunks * UNROLL;
     for i in remainder_start..a.len() {
         let d = a[i] as i32 - b[i] as i32;
         dist += (d * d) as f32;

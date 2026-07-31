@@ -125,7 +125,7 @@ fn test_metrics_enum_dot_product() {
 fn test_metrics_string() {
     assert_eq!(Metrics::Cosine.string(), "COSINE");
     assert_eq!(Metrics::Euclidean.string(), "EUCLIDEAN");
-    assert_eq!(Metrics::RawDot.string(), "DOT_PRODUCT");
+    assert_eq!(Metrics::RawDot.string(), "DOT");
 }
 
 #[test]
