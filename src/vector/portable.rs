@@ -2,7 +2,8 @@ use std::ptr::{read_unaligned, write_unaligned};
 use wide::{f32x8, i32x4};
 
 #[inline(always)]
-/// Portable SIMD-optimized cosine similarity for raw, un-normalized f32 vectors
+/// Portable SIMD-optimized cosine similarity for raw, un-normalized f32 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
 
@@ -78,15 +79,13 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 
     // div check
-    let denominator = (na_sum * nb_sum).sqrt();
-    if denominator < 1e-12 {
-        0.0
-    } else {
-        dot_sum / denominator
-    }
+    let demon = (na_sum * nb_sum).sqrt();
+    if demon < 1e-12 { 0.0 } else { dot_sum / demon }
 }
 
 #[inline(always)]
+/// Portable SIMD-optimized cosine similarity for raw, un-normalized i8 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
 
@@ -151,30 +150,27 @@ pub fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     }
 
     // reduce scalar
-    let mut dot_sum = i32x4::reduce_add(dot0 + dot1);
-    let mut norm_a_sum = i32x4::reduce_add(norm_a0 + norm_a1);
-    let mut norm_b_sum = i32x4::reduce_add(norm_b0 + norm_b1);
+    let mut dot_sum = i32x4::reduce_add(dot0 + dot1) as f32;
+    let mut norm_a_sum = i32x4::reduce_add(norm_a0 + norm_a1) as f32;
+    let mut norm_b_sum = i32x4::reduce_add(norm_b0 + norm_b1) as f32;
 
     // handle reminder
     for i in reminder_range {
-        let ai = a[i] as i32;
-        let bi = b[i] as i32;
-        dot_sum += ai * bi;
-        norm_a_sum += ai * ai;
-        norm_b_sum += bi * bi;
+        let ai = a[i] as f32;
+        let bi = b[i] as f32;
+        dot_sum = ai.mul_add(bi, dot_sum);
+        norm_a_sum = ai.mul_add(ai, norm_a_sum);
+        norm_b_sum = bi.mul_add(bi, norm_b_sum);
     }
 
     // div check
-    let denom = (norm_a_sum as f32 * norm_b_sum as f32).sqrt();
-    if denom < 1e-12 {
-        0.0
-    } else {
-        dot_sum as f32 / denom
-    }
+    let denom = (norm_a_sum * norm_b_sum).sqrt();
+    if denom < 1e-12 { 0.0 } else { dot_sum / denom }
 }
 
-/// SIMD-optimized raw Dot product for f32 vectors
 #[inline(always)]
+/// Portable SIMD-optimized raw Dot product for f32 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
 
@@ -231,8 +227,9 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     total_sum
 }
 
-/// Raw dot product for i8 vectors (scalar fallback)
 #[inline(always)]
+/// Portable SIMD-optimized raw Dot product for i8 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
     assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
 
@@ -283,19 +280,20 @@ pub fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
             dot1 += va * vb;
         }
     }
-    let mut dot_sum = i32x4::reduce_add(dot0 + dot1);
+    let mut dot_sum = i32x4::reduce_add(dot0 + dot1) as f32;
 
     for i in reminder_range {
-        let ai = a[i] as i32;
-        let bi = b[i] as i32;
-        dot_sum += ai * bi;
+        let ai = a[i] as f32;
+        let bi = b[i] as f32;
+        dot_sum = ai.mul_add(bi, dot_sum);
     }
 
-    dot_sum as f32
+    dot_sum
 }
 
-/// SIMD-optimized Euclidean similarity f32 vectors
 #[inline(always)]
+/// Portable SIMD-optimized Euclidean similarity for f32 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
 
@@ -358,8 +356,9 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     1.0 / (1.0 + dist.sqrt())
 }
 
-/// Euclidean similarity for i8 vectors (scalar fallback)
 #[inline(always)]
+/// Portable SIMD-optimized Euclidean similarity for i8 vectors,
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     assert_eq!(a.len(), b.len());
 
@@ -413,19 +412,20 @@ pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     }
 
     // reduce to scalar
-    let mut dist = i32x4::reduce_add(sumsq0 + sumsq1);
+    let mut dist = i32x4::reduce_add(sumsq0 + sumsq1) as f32;
 
     // handle remainder
     for i in reminder_range {
-        let diff = a[i] as i32 - b[i] as i32;
-        dist += diff * diff;
+        let diff = a[i] as f32 - b[i] as f32;
+        dist = diff.mul_add(diff, dist);
     }
 
-    1.0 / (1.0 + (dist as f32).sqrt())
+    1.0 / (1.0 + dist.sqrt())
 }
 
-/// SIMD-optimized L1-normalize a f32 vector slice in-place
 #[inline(always)]
+/// Portable SIMD-optimized L1-normalize a f32 vector slice in-place
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn normalize_l1(v: &mut [f32]) {
     const LANES: usize = 4 * 8;
     // TODO: this is scalar, how lame ;(
@@ -461,8 +461,9 @@ pub fn normalize_l1(v: &mut [f32]) {
     }
 }
 
-/// SIMD-optimized L2-normalize a f32 vector slice in-place
 #[inline(always)]
+/// Portable SIMD-optimized L2-normalize a f32 vector slice in-place
+/// can't guarantee peak performance on `non-x86_64` arch
 pub fn normalize_l2(v: &mut [f32]) {
     const LANES: usize = 4 * 8;
 
@@ -497,9 +498,9 @@ pub fn normalize_l2(v: &mut [f32]) {
     }
 }
 
+#[inline(always)]
 /// Multiply two f32 matrices using 4 portable `SIMD` registers at a time, returning the resulting matrix.
 /// The matrices are expected to be in row-major order and the dimensions must match
-#[inline(always)]
 pub fn matmul(
     matrix_a: &[f32],
     matrix_b: &[f32],
@@ -510,24 +511,27 @@ pub fn matmul(
 ) -> Vec<f32> {
     let mut result = vec![0.0f32; rows_a * cols_b];
     let mut b_t = vec![0.0f32; rows_b * cols_b];
-    matmul_into(
-        matrix_a,
-        matrix_b,
-        rows_a,
-        cols_a,
-        rows_b,
-        cols_b,
-        &mut b_t,
-        &mut result,
-    );
+    unsafe {
+        matmul_into(
+            matrix_a,
+            matrix_b,
+            rows_a,
+            cols_a,
+            rows_b,
+            cols_b,
+            &mut b_t,
+            &mut result,
+        );
+    }
     result
 }
 
-/// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
-/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will panic.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub fn matmul_into(
+#[allow(clippy::missing_safety_doc)]
+/// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
+/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will UB.
+pub unsafe fn matmul_into(
     matrix_a: &[f32],
     matrix_b: &[f32],
     rows_a: usize,
@@ -690,10 +694,10 @@ pub fn matmul_into(
     }
 }
 
-/// In-place transpose of a matrix, the input and output slices must be the same size and the input matrix is expected to be in row-major order.
-/// The output will also be in row-major order but with rows and columns swapped.
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
+/// In-place transpose of a matrix, the input and output slices must be the same size and the input matrix is expected to be in row-major order.
+/// The output will also be in row-major order but with rows and columns swapped.
 pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output: &mut [f32]) {
     // let len = rows * cols;
     // if len != matrix.len() || len != output.len() {
