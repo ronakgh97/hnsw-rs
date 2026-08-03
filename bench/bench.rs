@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 // TODO: Something wrong, this is way beyond slow, need to figure out later
+// TODO: Quant BENCH Harness
 
 const DATASET_CACHE: &str = "./bench/bench_data.bin";
 const INDEX_CACHE: &str = "./bench/bench_index.bin";
@@ -31,13 +32,13 @@ struct BenchmarkResult {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    let path = args
+    let path: String = args
         .get(1)
-        .expect("Usage: bench <input_parquet_dir> [num_files]")
-        .to_owned();
+        .expect("Usage: bencher <input_parquet_dir> [num_files]")
+        .parse()?;
     let num: usize = args
         .get(2)
-        .expect("Usage: bench <input_parquet_dir> [num_files]")
+        .expect("Usage: bencher <input_parquet_dir> [num_files]")
         .parse()?;
 
     if !PathBuf::from(DATASET_CACHE).exists() {
