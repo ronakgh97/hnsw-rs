@@ -1,23 +1,24 @@
 use hnsw_rs::prelude::*;
 
-/// Test Fixture: Initializes and populates an HNSW graph with random data.
+/// Initializes and populates an HNSW graph with random data.
 /// Returns both the generated node IDs and their corresponding vectors.
 fn setup_populated_hnsw(
     hnsw: &mut VectorHnsw,
     num: usize,
     dim: usize,
     seed: usize,
-) -> (Vec<[u8; 32]>, Vec<Vec<f32>>) {
-    let mut vectors = gen_vec(num, dim, seed).0;
+) -> (Vec<[u8; 32]>, VectorGen) {
+    let mut vg = VectorGen::generate(num, dim, Some(seed as u64));
     let mut ids = Vec::with_capacity(num);
 
-    for vector in vectors.iter_mut() {
+    for i in 0..num {
         let id = gen_uuid();
         let level = hnsw.get_random_level();
-        hnsw.insert(id, vector, gen_bytes(64), level).unwrap();
+        hnsw.insert(id, vg.get_mut(i), gen_bytes(64), level)
+            .unwrap();
         ids.push(id);
     }
-    (ids, vectors)
+    (ids, vg)
 }
 
 #[inline(always)]
@@ -100,18 +101,18 @@ fn test_hnsw_basic_insertion_and_search() {
 #[test]
 fn test_hnsw_search_returns_correct_k() {
     let mut hnsw: VectorHnsw = make_hnsw(32);
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 20, 32, 42);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 20, 32, 42);
 
-    assert_eq!(hnsw.search(&mut vectors[0], 5, None).len(), 5);
+    assert_eq!(hnsw.search(vg.get_mut(0), 5, None).len(), 5);
 }
 
 #[test]
 fn test_hnsw_search_with_different_ef() {
     let mut hnsw: VectorHnsw = make_hnsw(64);
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 50, 64, 99);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 50, 64, 99);
 
-    assert_eq!(hnsw.search(&mut vectors[10], 5, Some(10)).len(), 5);
-    assert_eq!(hnsw.search(&mut vectors[10], 5, Some(50)).len(), 5);
+    assert_eq!(hnsw.search(vg.get_mut(10), 5, Some(10)).len(), 5);
+    assert_eq!(hnsw.search(vg.get_mut(10), 5, Some(50)).len(), 5);
 }
 
 #[test]
@@ -154,15 +155,15 @@ fn test_hnsw_search_with_different_metrics() {
 #[test]
 fn test_hnsw_brute_force_search() {
     let mut hnsw: VectorHnsw = make_hnsw(32);
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 30, 32, 123);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 30, 32, 123);
 
     let hnsw_ids: Vec<_> = hnsw
-        .search(&mut vectors[5], 5, None)
+        .search(vg.get_mut(5), 5, None)
         .into_iter()
         .map(|(id, _)| id)
         .collect();
     let bf_ids: Vec<_> = hnsw
-        .brute_search(&mut vectors[5], 5)
+        .brute_search(vg.get_mut(5), 5)
         .into_iter()
         .map(|(id, _)| id)
         .collect();
@@ -214,20 +215,20 @@ fn test_hnsw_active_count() {
 #[test]
 fn test_hnsw_multiple_searches() {
     let mut hnsw: VectorHnsw = make_hnsw(48);
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 30, 48, 7);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 30, 48, 7);
 
     for i in 0..10 {
         let idx = (i * 6969) % 30;
-        assert_eq!(hnsw.search(&mut vectors[idx], 5, None).len(), 5);
+        assert_eq!(hnsw.search(vg.get_mut(idx), 5, None).len(), 5);
     }
 }
 
 #[test]
 fn test_hnsw_with_large_vectors() {
     let mut hnsw: VectorHnsw = make_hnsw(512);
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 50, 512, 8);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 50, 512, 8);
 
-    assert_eq!(hnsw.search(&mut vectors[25], 10, None).len(), 10);
+    assert_eq!(hnsw.search(vg.get_mut(25), 10, None).len(), 10);
 }
 
 #[test]
@@ -244,9 +245,9 @@ fn test_hnsw_simple_selection_opt_in() {
         false, // use_simple_selection = Alg. 3
     );
 
-    let (_, mut vectors) = setup_populated_hnsw(&mut hnsw, 100, 32, 42);
+    let (_, mut vg) = setup_populated_hnsw(&mut hnsw, 100, 32, 42);
 
     // Search should work correctly with Alg. 3
-    let results = hnsw.search(&mut vectors[50], 10, Some(64));
+    let results = hnsw.search(vg.get_mut(50), 10, Some(64));
     assert_eq!(results.len(), 10);
 }

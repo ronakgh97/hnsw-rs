@@ -27,8 +27,8 @@ pub fn quant(vector_f32: &[f32], vector_i8: &mut [i8]) -> f32 {
 }
 
 #[inline(always)]
-/// Transforms a vector of `i8` values back into `f32` values using the provided scale factor.
-/// Uses it with [`quant`] to recover the original values (with some loss).
+/// Transforms a vector of `i8` values back into `f32` values using the provided `scale` factor.
+/// Uses it with [`quant`] to recover the original values `(with some loss)`.
 pub fn dequant(vector_i8: &[i8], vector_f32: &mut [f32], scale: f32) {
     assert_eq!(vector_i8.len(), vector_f32.len());
 
@@ -39,17 +39,15 @@ pub fn dequant(vector_i8: &[i8], vector_f32: &mut [f32], scale: f32) {
 
 #[test]
 fn test_quant_loss() {
-    use crate::utils::gen_vec;
-    use crate::vector::dot_product;
-    use crate::vector::dot_product_i8;
+    use crate::utils::VectorGen;
 
-    let (generated_vec, _) = gen_vec(2, 1024, 99); // 2 vector, 1024d, 99 seed
+    let vg = VectorGen::generate(2, 1024, None); // random seed
 
     let mut vector1_i8 = vec![0i8; 1024];
     let mut vector2_i8 = vec![0i8; 1024];
 
-    let vector1_f32 = &generated_vec[0];
-    let vector2_f32 = &generated_vec[1];
+    let vector1_f32 = vg.get(0);
+    let vector2_f32 = vg.get(1);
 
     let scale1 = quant(vector1_f32, &mut vector1_i8);
     let scale2 = quant(vector2_f32, &mut vector2_i8);
@@ -88,13 +86,4 @@ fn test_quant_loss() {
         / vector1_f32.len() as f32;
 
     println!("MSE = {}", mse);
-
-    let dot_f32 = unsafe { dot_product(vector1_f32, vector2_f32) };
-    let dot_i8: f32 = unsafe { dot_product_i8(&vector1_i8, &vector2_i8) };
-    let dequant_f32 = unsafe { dot_product(&vector1_dequant, &vector2_dequant) };
-
-    println!("F32      = {}", dot_f32);
-    println!("I8       = {}", dot_i8 * scale1 * scale2);
-    println!("Recovered = {}", dequant_f32);
-    println!("Diff       = {}", (dot_f32 - dequant_f32).abs());
 }

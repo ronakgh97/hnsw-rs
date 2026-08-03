@@ -148,18 +148,18 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///    let mut hnsw = VectorHnsw::default(); // HNSW<FlatVectorStore>::default()
 ///    let _quant_hnsw = Vector8bitHnsw::default(); // HNSW<FlatVector8bitStore>::default()
 ///
-///    let (mut vectors, _seed) = gen_vec(10, 1024, 0); // vectors=10 d=1024 seed=0
+///    let mut vg = VectorGen::generate(12, 1024, Some(0)); // seed=0, None for random
 ///
-///    for vector in vectors.iter_mut() {
+///    for i in 0..12 {
 ///        let mut id = [0u8; 32];
 ///        fastrand::fill(&mut id); // elegant random 256-bit UUID
 ///        let level_asg = hnsw.get_random_level(); // random graph level for this node
 ///        let metadata = vec![];
-///        hnsw.insert(id, vector, metadata, level_asg).unwrap(); // take &mut vector btw
+///        hnsw.insert(id, vg.get_mut(i), metadata, level_asg).unwrap(); // take &mut vector btw
 ///    }
 ///
-///    assert_eq!(hnsw.size(), 10);
-///    assert_eq!(hnsw.search(&mut vectors[5], 3, None).len(), 3);
+///    assert_eq!(hnsw.size(), 12);
+///    assert_eq!(hnsw.search(vg.get_mut(5), 3, None).len(), 3);
 /// }
 ///```
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]

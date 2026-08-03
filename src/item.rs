@@ -173,20 +173,18 @@ impl ItemBackend for FlatVectorStore {
 
     #[inline(always)]
     fn similarity(&self, a: &Self::Item, b: &Self::Item) -> f32 {
-        unsafe {
-            match self.metric {
-                Metrics::Cosine | Metrics::RawDot => dot_product(a, b), // l2 norm, so both dot
-                Metrics::Euclidean => euclidean_similarity(a, b),
-            }
+        match self.metric {
+            Metrics::Cosine | Metrics::RawDot => dot_product(a, b), // l2 norm, so both dot
+            Metrics::Euclidean => euclidean_similarity(a, b),
         }
     }
 
     #[inline(always)]
     fn distance(&self, item0: &Self::Item, item1: &Self::Item) -> f32 {
         match self.metric {
-            Metrics::Cosine => 1.0 - unsafe { dot_product(item0, item1) },
-            Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity(item0, item1) - 1.0) },
-            Metrics::RawDot => -unsafe { dot_product(item0, item1) },
+            Metrics::Cosine => 1.0 - dot_product(item0, item1),
+            Metrics::Euclidean => 1.0 / (euclidean_similarity(item0, item1) - 1.0),
+            Metrics::RawDot => -dot_product(item0, item1),
         }
     }
 }
@@ -194,8 +192,8 @@ impl ItemBackend for FlatVectorStore {
 /// A flat vector store that holds 8-bit quantized vectors in a contiguous memory layout.
 /// This implements [ItemBackend] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for quantized vector search ops.
 ///
-/// Quantized vectors should be produced via [`crate::quant::quant`] before insertion/search.
-/// Similarity and distance operate directly on `i8` data using SIMD-optimized functions from [`crate::vector`].
+/// Quantized vectors should be produced via [`quant`](crate::quant) before insertion/search.
+/// Similarity and distance operate directly on `i8` data using SIMD-optimized functions from [`vector`](crate::vector).
 ///
 /// Uses ~4x less memory than [`FlatVectorStore`] (1 byte per element vs 4 bytes).
 ///
@@ -290,21 +288,19 @@ impl ItemBackend for FlatI8VectorStore {
 
     #[inline(always)]
     fn similarity(&self, a: &[i8], b: &[i8]) -> f32 {
-        unsafe {
-            match self.metric {
-                Metrics::Cosine => cosine_similarity_i8(a, b),
-                Metrics::RawDot => dot_product_i8(a, b),
-                Metrics::Euclidean => euclidean_similarity_i8(a, b),
-            }
+        match self.metric {
+            Metrics::Cosine => cosine_similarity_i8(a, b),
+            Metrics::RawDot => dot_product_i8(a, b),
+            Metrics::Euclidean => euclidean_similarity_i8(a, b),
         }
     }
 
     #[inline(always)]
     fn distance(&self, a: &[i8], b: &[i8]) -> f32 {
         match self.metric {
-            Metrics::Cosine => 1.0 - unsafe { cosine_similarity_i8(a, b) },
-            Metrics::RawDot => -unsafe { dot_product_i8(a, b) },
-            Metrics::Euclidean => unsafe { 1.0 / (euclidean_similarity_i8(a, b) - 1.0) },
+            Metrics::Cosine => 1.0 - cosine_similarity_i8(a, b),
+            Metrics::RawDot => -dot_product_i8(a, b),
+            Metrics::Euclidean => 1.0 / (euclidean_similarity_i8(a, b) - 1.0),
         }
     }
 }

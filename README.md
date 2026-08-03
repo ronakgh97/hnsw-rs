@@ -17,6 +17,13 @@ cargo bench --bench bencher  -- ../../datasets/dim1536_size1M 4
                               <path to dataset> <num of files to read>
 ```
 
+> NOTE; This lib uses [Portable SIMD](https://docs.rs/wide/1.6.0/wide/index.html)
+> and [x86_64 intrinsics](https://doc.rust-lang.org/core/arch/x86_64/index.html)
+> for vector operations, so _Peak performance_ can't be guaranteed on non-x86_64 targets, but it should still work &
+> compile due to #[cfg].
+
+Benched on I7 14650hx (rust 1.97.1, target: x86_64-pc-windows-msvc)
+
 ```shell
 # Alg. 3 (simple, paper default): max_n: 16, ef_const: 96, max_l: 18, metrics: cosine
 Total vectors: 153848, dimension: 1536
@@ -77,6 +84,7 @@ Ref:
 - https://arxiv.org/abs/2512.06636
 - https://arxiv.org/pdf/2406.03482
 - https://arxiv.org/html/2412.01940v1
+- https://suif.stanford.edu/papers/lam-asplos91.pdf
 - https://www.pinecone.io/learn/series/faiss/hnsw/
 - https://www.techrxiv.org/users/922842/articles/1311476-a-comparative-study-of-hnsw-implementations-for-scalable-approximate-nearest-neighbor-search
 

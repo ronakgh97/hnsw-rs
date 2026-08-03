@@ -2,22 +2,26 @@
 //!
 //! A **generic** implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search.
 //! This implementation is based by this [paper](https://arxiv.org/pdf/1603.09320)
-//! but isn't fully based on that, I have done some of my own simplifications/modifications and is `reasonably` efficient for most use cases, but not optimized for production use yet [GitHub](https://github.com/ronakgh97/hnsw-rs)
+//! but isn't fully based on that, I have done some of my own simplifications/modifications and is `reasonably` efficient for most use cases,
+//! but not optimized for production use yet [GitHub](https://github.com/ronakgh97/hnsw-rs)
 //!
 //! ## Benchmarks
 //!
-//! ![Bench Graph](https://raw.githubusercontent.com/ronakgh97/hnsw-rs/refs/heads/master/bench/plot.png)
-//! Refer to [this](https://github.com/ronakgh97/hnsw-rs/blob/master/README.md) for more details on benchmarks
+//! ![Bench Graph](https://raw.githubusercontent.com/ronakgh97/hnsw-rs/refs/heads/master/bench/plot.png),
+//! refer to [this](https://github.com/ronakgh97/hnsw-rs/blob/master/README.md) for more details on benchmarks
 //!
 //! ## Features
 //!
 //! - **Generic**: Pluggable backend via [`ItemBackend`](item::ItemBackend) trait — use [`FlatVectorStore`](item::FlatVectorStore) for vectors (which is specifically optimized using portable SIMD and unsafe code) or implement for any data type (string, locations, images, AST, bioinformatics, any arbitrary quantity etc.)
 //! - **[Wincode Support](https://crates.io/crates/wincode)**: Makes serialization/deserialization efficient, in-place and compact for disk-storage
+//! - **Portable SIMD**: Uses [wide](https://crates.io/crates/wide) for FAST vector operations, with AVX2 optimizations where applicable
+//! - **x86_64 specific optimization**: Uses [core::arch::x86_64](https://doc.rust-lang.org/core/arch/x86_64/index.html) for AVX2 and SSE optimizations for vector operation on x86_64 platforms
 //! - **Parallel Processing**: Uses [rayon](https://crates.io/crates/rayon) for parallel operations where possible
 //!
-//! ## Examples
+//! ## Mini-Example
 //!
 //!```rust
+//!
 //! use hnsw_rs::prelude::*;
 //!
 //! fn main() {
@@ -26,16 +30,16 @@
 //!     // build the HNSW graph (M=16, ef=200, 12 layers)
 //!     let mut hnsw = HNSW::new(store, 16, 200, 12, 1.0 / (16.0_f32).ln(), 100_000, true, true);
 //!
-//!     let (mut vectors, _) = gen_vec(100, 128, 42);
+//!     let mut vg = VectorGen::generate(100, 128, Some(42)); // n=100, d=128, seed=42
 //!
-//!     for v in vectors.iter_mut() {
+//!     for i in 0..100 {
 //!         let mut uuid = [0u8; 32];
 //!         fastrand::fill(&mut uuid);
 //!         let level = hnsw.get_random_level();
-//!         hnsw.insert(uuid, v, vec![], level).unwrap();
+//!         hnsw.insert(uuid, vg.get_mut(i), vec![], level).unwrap();
 //!     }
 //!
-//!     let results = hnsw.search(&mut vectors[0], 5, None);
+//!     let results = hnsw.search(vg.get_mut(0), 5, None);
 //!     println!("Top 5 neighbors: {:?}", results);
 //! }
 //!```
@@ -52,6 +56,7 @@
 //! - <https://arxiv.org/pdf/1603.09320>
 //! - <https://arxiv.org/pdf/2512.06636>
 //! - <https://arxiv.org/pdf/2412.01940v1>
+//! - <https://suif.stanford.edu/papers/lam-asplos91.pdf>
 //! - <https://www.techrxiv.org/users/922842/articles/1311476-a-comparative-study-of-hnsw-implementations-for-scalable-approximate-nearest-neighbor-search>
 //!
 
