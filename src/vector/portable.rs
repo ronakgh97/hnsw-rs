@@ -5,7 +5,7 @@ use wide::{f32x8, i32x4};
 /// Portable SIMD-optimized cosine similarity for raw, un-normalized f32 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 32;
 
@@ -87,7 +87,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Portable SIMD-optimized cosine similarity for raw, un-normalized i8 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
-    assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 8;
 
@@ -172,7 +172,7 @@ pub fn cosine_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
 /// Portable SIMD-optimized raw Dot product for f32 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 32;
     let simd_range = 0..(a.len() / LANE);
@@ -231,7 +231,7 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 /// Portable SIMD-optimized raw Dot product for i8 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
-    assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 8;
     let simd_range = 0..(a.len() / LANE);
@@ -295,7 +295,7 @@ pub fn dot_product_i8(a: &[i8], b: &[i8]) -> f32 {
 /// Portable SIMD-optimized Euclidean similarity for f32 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "a: {} != b: {}", a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 32;
     let simd_range = 0..(a.len() / LANE);
@@ -360,7 +360,7 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Portable SIMD-optimized Euclidean similarity for i8 vectors,
 /// can't guarantee peak performance on `non-x86_64` arch
 pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
-    assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "Vector lengths do not match");
 
     const LANE: usize = 8;
     let simd_range = 0..(a.len() / LANE);
@@ -376,34 +376,34 @@ pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
         let offset = i * LANE;
         unsafe {
             let va = i32x4::new([
-                a_ptr.add(offset).read() as i32,
-                a_ptr.add(offset + 1).read() as i32,
-                a_ptr.add(offset + 2).read() as i32,
-                a_ptr.add(offset + 3).read() as i32,
+                *a_ptr.add(offset) as i32,
+                *a_ptr.add(offset + 1) as i32,
+                *a_ptr.add(offset + 2) as i32,
+                *a_ptr.add(offset + 3) as i32,
             ]);
 
             let vb = i32x4::new([
-                b_ptr.add(offset).read() as i32,
-                b_ptr.add(offset + 1).read() as i32,
-                b_ptr.add(offset + 2).read() as i32,
-                b_ptr.add(offset + 3).read() as i32,
+                *b_ptr.add(offset) as i32,
+                *b_ptr.add(offset + 1) as i32,
+                *b_ptr.add(offset + 2) as i32,
+                *b_ptr.add(offset + 3) as i32,
             ]);
 
             let d = va - vb;
             sumsq0 += d * d;
 
             let va = i32x4::new([
-                a_ptr.add(offset).read() as i32,
-                a_ptr.add(offset + 1).read() as i32,
-                a_ptr.add(offset + 2).read() as i32,
-                a_ptr.add(offset + 3).read() as i32,
+                *a_ptr.add(offset + 4) as i32,
+                *a_ptr.add(offset + 5) as i32,
+                *a_ptr.add(offset + 6) as i32,
+                *a_ptr.add(offset + 7) as i32,
             ]);
 
             let vb = i32x4::new([
-                b_ptr.add(offset).read() as i32,
-                b_ptr.add(offset + 1).read() as i32,
-                b_ptr.add(offset + 2).read() as i32,
-                b_ptr.add(offset + 3).read() as i32,
+                *b_ptr.add(offset + 4) as i32,
+                *b_ptr.add(offset + 5) as i32,
+                *b_ptr.add(offset + 6) as i32,
+                *b_ptr.add(offset + 7) as i32,
             ]);
 
             let d = va - vb;
@@ -500,7 +500,8 @@ pub fn normalize_l2(v: &mut [f32]) {
 
 #[inline(always)]
 /// Multiply two f32 matrices using 4 portable `SIMD` registers at a time, returning the resulting matrix.
-/// The matrices are expected to be in row-major order and the dimensions must match
+/// The matrices are expected to be in row-major order and the dimensions must match for multiplication, otherwise it will UB.
+/// _Peak performance is not guaranteed on `non-x86_64` arch_.
 pub fn matmul(
     matrix_a: &[f32],
     matrix_b: &[f32],
@@ -529,8 +530,9 @@ pub fn matmul(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::missing_safety_doc)]
-/// In-place SIMD matmul, the result is stored in the `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
-/// The matrix is expected to be in row-major order and the dimensions must match, otherwise it will UB.
+/// In-place SIMD-optimized matmul, the result is stored in the `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
+/// The matrix is expected to be in row-major order and the dimensions must match for multiplication, otherwise it will UB.
+/// _Peak performance is not guaranteed on `non-x86_64` arch_.
 pub unsafe fn matmul_into(
     matrix_a: &[f32],
     matrix_b: &[f32],
@@ -697,7 +699,7 @@ pub unsafe fn matmul_into(
 #[inline(always)]
 #[allow(clippy::missing_safety_doc)]
 /// In-place transpose of a matrix, the input and output slices must be the same size and the input matrix is expected to be in row-major order.
-/// The output will also be in row-major order but with rows and columns swapped.
+/// _Peak performance is not guaranteed on `non-x86_64` arch_, since this does not use any `8x8 micro-kernel SIMD`.
 pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output: &mut [f32]) {
     // let len = rows * cols;
     // if len != matrix.len() || len != output.len() {
@@ -717,6 +719,7 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
             let i_max = (ii + TILE).min(rows);
             let j_max = (jj + TILE).min(cols);
 
+            // tile blocking
             for i in ii..i_max {
                 for j in jj..j_max {
                     unsafe {
