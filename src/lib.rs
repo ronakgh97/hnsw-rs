@@ -33,10 +33,9 @@
 //!     let mut vg = VectorGen::generate(100, 128, Some(42)); // n=100, d=128, seed=42
 //!
 //!     for i in 0..100 {
-//!         let mut uuid = [0u8; 32];
-//!         fastrand::fill(&mut uuid);
+//!         let uuid = fastrand::u128(..);
 //!         let level = hnsw.get_random_level();
-//!         hnsw.insert(uuid, vg.get_mut(i), vec![], level).unwrap();
+//!         hnsw.insert(uuid, vg.get_mut(i), level).unwrap();
 //!     }
 //!
 //!     let results = hnsw.search(vg.get_mut(0), 5, None);
@@ -49,6 +48,7 @@
 //! ### Custom storage backends
 //!
 //! Implement [`ItemBackend`](item::ItemBackend) for any data type — strings, images, locations, bioinformatics etc.
+//! Metadata is not included in graph index, nodes are stored with `u128` UUIDs, so you can store any data type in a separate database and use the UUIDs to reference them.
 //! See the trait docs for an example.
 //!
 //! ## References
@@ -66,11 +66,13 @@ pub mod quant;
 pub mod storage;
 pub mod utils;
 pub mod vector;
-pub use wincode::*;
+pub use wincode::config;
+pub use wincode::{SchemaRead, SchemaWrite};
 
 pub mod prelude {
     pub use crate::hnsw::*;
     pub use crate::item::*;
+    pub use crate::quant::*;
     pub use crate::storage::*;
     pub use crate::utils::*;
     pub use crate::vector::*;

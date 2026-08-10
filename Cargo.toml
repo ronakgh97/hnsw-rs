@@ -15,8 +15,15 @@ name = "hnsw_rs"
 path = "src/lib.rs"
 
 [[bench]]
-name = "bencher"
-path = "bench/bench.rs"
+name = "32bit"
+path = "bench/f32.rs"
+harness = false
+test = false
+doctest = false
+
+[[bench]]
+name = "8bit"
+path = "bench/i8.rs"
 harness = false
 test = false
 doctest = false
@@ -39,7 +46,7 @@ incremental = true
 wincode = { version = "0.6.0", features = ["derive"] }
 memmap2 = "0.9.11"
 ahash = "0.8.12"
-wide = "1.6.0"
+wide = "1.6.1"
 rayon = "1.12.0"
 sha2 = "0.11.0"
 anyhow = "1.0.104"
@@ -48,6 +55,6 @@ fastrand = "2.5.0"
 # aligned-vec = "0.6.4"
 
 [dev-dependencies]
-arrow = "59.1.0"
-parquet = "59.1.0"
+arrow = "59.2.0"
+parquet = "59.2.0"
 plotters = "0.3.7"

@@ -1,6 +1,7 @@
 //! Implementation will be based on this [Turboquant](https://arxiv.org/pdf/2504.19874)
 
 #[inline(always)]
+// TODO; Overwrite f32 memory directly
 /// Quantizes a vector of `f32` values into `i8` values using a simple linear online quantization scheme.
 /// Returns the scale factor used for quantization.
 pub fn quant(vector_f32: &[f32], vector_i8: &mut [i8]) -> f32 {

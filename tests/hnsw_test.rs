@@ -7,32 +7,22 @@ fn setup_populated_hnsw(
     num: usize,
     dim: usize,
     seed: usize,
-) -> (Vec<[u8; 32]>, VectorGen) {
+) -> (Vec<u128>, VectorGen) {
     let mut vg = VectorGen::generate(num, dim, Some(seed as u64));
     let mut ids = Vec::with_capacity(num);
 
     for i in 0..num {
         let id = gen_uuid();
         let level = hnsw.get_random_level();
-        hnsw.insert(id, vg.get_mut(i), gen_bytes(64), level)
-            .unwrap();
+        hnsw.insert(id, vg.get_mut(i), level).unwrap();
         ids.push(id);
     }
     (ids, vg)
 }
 
 #[inline(always)]
-pub fn gen_uuid() -> [u8; 32] {
-    let mut id = [0u8; 32];
-    fastrand::fill(&mut id);
-    id
-}
-
-#[inline(always)]
-pub fn gen_bytes(size: usize) -> Vec<u8> {
-    let mut tmp = vec![0u8; size];
-    fastrand::fill(&mut tmp);
-    tmp
+pub fn gen_uuid() -> u128 {
+    fastrand::u128(..)
 }
 
 fn make_hnsw(dim: usize) -> VectorHnsw {
@@ -90,7 +80,7 @@ fn test_hnsw_basic_insertion_and_search() {
     ];
 
     for v in &mut vectors {
-        hnsw.insert(gen_uuid(), v, vec![], 0).unwrap();
+        hnsw.insert(gen_uuid(), v, 0).unwrap();
     }
     assert_eq!(hnsw.size(), 3);
 
@@ -116,19 +106,6 @@ fn test_hnsw_search_with_different_ef() {
 }
 
 #[test]
-fn test_hnsw_search_with_metadata() {
-    let mut hnsw: VectorHnsw = make_hnsw(2);
-    hnsw.insert(gen_uuid(), &mut [1.0, 0.0], b"meta0".to_vec(), 0)
-        .unwrap();
-    hnsw.insert(gen_uuid(), &mut [0.0, 1.0], b"meta1".to_vec(), 0)
-        .unwrap();
-
-    let results = hnsw.search_metadata(&mut [1.0, 0.0], 1, None);
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].2, b"meta0");
-}
-
-#[test]
 fn test_hnsw_search_with_different_metrics() {
     let test_cases = [
         (Metrics::Cosine, vec![1.0, 0.0, 0.0]),
@@ -145,8 +122,7 @@ fn test_hnsw_search_with_different_metrics() {
         ];
 
         for v in &mut vectors {
-            hnsw.insert(gen_uuid(), v, vec![], hnsw.get_random_level())
-                .unwrap();
+            hnsw.insert(gen_uuid(), v, hnsw.get_random_level()).unwrap();
         }
         assert_eq!(hnsw.search(&mut query, 2, None).len(), 2);
     }
@@ -176,29 +152,28 @@ fn test_hnsw_delete_node() {
     let mut hnsw: VectorHnsw = make_hnsw(32);
     let (ids, _) = setup_populated_hnsw(&mut hnsw, 10, 32, 1);
 
-    hnsw.delete_node(&ids[0]).unwrap();
+    hnsw.delete_node(ids[0]).unwrap();
     assert_eq!(hnsw.active_count(), 9);
     assert_eq!(hnsw.tombstone_count(), 1);
-    assert!(hnsw.delete_node(&gen_uuid()).is_err());
+    assert!(hnsw.delete_node(gen_uuid()).is_err());
 }
 
 #[test]
 fn test_hnsw_get_node() {
     let mut hnsw: VectorHnsw = make_hnsw(3);
     let id = gen_uuid();
-    hnsw.insert(id, &mut [1.0, 2.0, 3.0], b"metadata".to_vec(), 0)
-        .unwrap();
+    hnsw.insert(id, &mut [1.0, 2.0, 3.0], 0).unwrap();
 
-    assert_eq!(hnsw.get_node(&id).unwrap().metadata, b"metadata");
-    assert!(hnsw.get_node(&gen_uuid()).is_none());
+    assert!(hnsw.get_node(id).is_some());
+    assert!(hnsw.get_node(gen_uuid()).is_none());
 }
 
 #[test]
 fn test_hnsw_duplicate_insert() {
     let mut hnsw: VectorHnsw = make_hnsw(1);
-    let id = [9u8; 32];
-    hnsw.insert(id, &mut [1.0], vec![], 0).unwrap();
-    assert!(hnsw.insert(id, &mut [2.0], vec![], 0).is_err());
+    let id = 9u128;
+    hnsw.insert(id, &mut [1.0], 0).unwrap();
+    assert!(hnsw.insert(id, &mut [2.0], 0).is_err());
 }
 
 #[test]
@@ -207,8 +182,8 @@ fn test_hnsw_active_count() {
     let (ids, _) = setup_populated_hnsw(&mut hnsw, 5, 16, 5);
 
     assert_eq!(hnsw.active_count(), 5);
-    hnsw.delete_node(&ids[0]).unwrap();
-    hnsw.delete_node(&ids[1]).unwrap();
+    hnsw.delete_node(ids[0]).unwrap();
+    hnsw.delete_node(ids[1]).unwrap();
     assert_eq!(hnsw.active_count(), 3);
 }
 

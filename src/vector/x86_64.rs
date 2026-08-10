@@ -1,7 +1,7 @@
 use std::arch::x86_64::*;
 
 #[macro_export]
-/// Horizontal sum of i32x8 `__m256i` vector, returning a single i32 value, **can overflow!!!**
+/// Horizontal sum of i32x8 `__m256i` vector, returning a single `i32` value, could overflow
 macro_rules! hsum_i32x8 {
     ($v:expr) => {{
         let lo = _mm256_extracti128_si256::<0>($v); // [a0, a1, a2, a3]
@@ -31,24 +31,19 @@ macro_rules! i8x32_dot_i32x8 {
 }
 
 #[macro_export]
-/// Horizontal sum of f32x8 `__m256d` vector, returning a single f32 value, **can overflow!**
+/// Horizontal sum of f32x8 `__m256d` vector, returning a single `f32` value, could overflow
 macro_rules! hsum_f32x8 {
-    ($v:expr) => {
-        {
-            // first pass; [a  b  c  d | e  f  g  h]
-            let hi = _mm256_permute2f128_ps($v, $v, 1); // [e  f  g  h | a  b  c  d]
-            let sum = _mm256_add_ps($v, hi); // [a+e  b+f  c+g  d+h | e+a  f+b  g+c  h+d]
-            // [x0 x1 x2 x3] -> [x2 x3 x0 x1]
-            let hi = _mm256_permute_ps(sum, 0b01001110); // [c+g  d+h  a+e  b+f | g+c  h+d  e+a  f+b]
+    ($v:expr) => {{
+        // first pass; [a,b,c,d | e,f,g,h]
+        let hi = _mm256_extractf128_ps($v, 1); // [e,f,g,h]
+        let lo = _mm256_castps256_ps128($v); // [a,b,c,d]
+        let hsum = _mm_add_ps(lo, hi); // [a+b, c+d, e+f, g+h]
 
-            // second pass to add the two halves together
-            let sum = _mm256_add_ps(sum, hi); // [a+e+b+f  c+g+d+h  e+a+f+b  g+c+h+d]
-            let hi = _mm256_permute_ps(sum, 0b10110001); // [c+g+d+h  a+e+b+f  g+c+h+d  e+a+f+b]
-            let sum = _mm256_add_ps(sum, hi); // [a+e+b+f+c+g+d+h  a+e+b+f+c+g+d+h  e+a+f+b+g+c+h+d  e+a+f+b+g+c+h+d]
-            _mm256_cvtss_f32(sum) // extract first
-
-        }
-    };
+        // second pass; add the two halves together
+        let sum = _mm_hadd_ps(hsum, hsum); // [a+e+b+f c+g+d+h a+e+b+f c+g+d+h]
+        let sum = _mm_hadd_ps(sum, sum); // [a+e+b+f+c+g+d+h,_,_,_]
+        _mm_cvtss_f32(sum) // just extract one
+    }};
 }
 
 #[inline(always)]

@@ -210,11 +210,10 @@ impl ItemBackend for FlatVectorStore {
 /// let mut i8_vec = vec![0i8; dim];
 /// let _scale = hnsw_rs::quant::quant(&f32_vec, &mut i8_vec);
 ///
-/// let mut uuid = [0u8; 32];
-/// fastrand::fill(&mut uuid);
+/// let uuid = fastrand::u128(..);
 ///
 /// let level = hnsw.get_random_level();
-/// hnsw.insert(uuid, &mut i8_vec, vec![], level).unwrap();
+/// hnsw.insert(uuid, &mut i8_vec, level).unwrap();
 ///```
 #[derive(SchemaRead, SchemaWrite)]
 pub struct FlatI8VectorStore {

@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use ahash::{HashMap, HashMapExt, HashSet};
 use anyhow::Result;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use wincode::{SchemaRead, SchemaWrite};
@@ -151,11 +152,9 @@ pub const DEFAULT_EF_INC_FACTOR: f32 = 1.572;
 ///    let mut vg = VectorGen::generate(12, 1024, Some(0)); // seed=0, None for random
 ///
 ///    for i in 0..12 {
-///        let mut id = [0u8; 32];
-///        fastrand::fill(&mut id); // elegant random 256-bit UUID
+///        let id = fastrand::u128(..); // 128-bit UUID
 ///        let level_asg = hnsw.get_random_level(); // random graph level for this node
-///        let metadata = vec![];
-///        hnsw.insert(id, vg.get_mut(i), metadata, level_asg).unwrap(); // take &mut vector btw
+///        hnsw.insert(id, vg.get_mut(i), level_asg).unwrap();
 ///    }
 ///
 ///    assert_eq!(hnsw.size(), 12);
@@ -306,29 +305,26 @@ impl<I: ItemBackend> HNSW<I> {
     /// - Otherwise, search from top layer down to find nearest neighbors
     /// - Connect the new node to its neighbors at each layer
     ///
-    /// * `id` — A unique 256-bit UUID for this node. Must not already exist in the graph.
+    /// * `id` — A unique 128-bit UUID for this node.
     /// * `node` — The item data. Coerced to `&mut` so the [backend](ItemBackend) can potentially modify it if needed.
-    /// * `metadata` — Opaque bytes stored alongside the node. Pass `vec![]` if unused.
     /// * `max_level` — The graph layer this node belongs to. Usually from [`HNSW::get_random_level`].
     ///
-    /// Returns `Ok(NodeUUID)` — the same UUID that was passed in, on success, or `Err()` if
-    /// [`validation`](ItemBackend::validate_item) rejects the item (wrong dimensions, format, etc.) and
-    /// `id` is empty or already exist in the graph
+    /// Returns `Ok(NodeUUID)` or `Err()` if [`validation`](ItemBackend::validate_item)
+    /// rejects the item (wrong dimensions, format, etc.) and `id` already exists in the graph.
+    ///
+    /// > **Note:** Metadata is not stored in the graph index. Users manage metadata separately
+    /// > via their own mapping (e.g. `HashMap<NodeUUID, T>`), or some external storage backends and DBs.
     pub fn insert(
         &mut self,
         id: NodeUUID,
         node: &mut I::Item,
-        metadata: Vec<u8>,
         max_level: usize,
     ) -> Result<NodeUUID> {
-        if id.is_empty() {
-            return Err(anyhow::anyhow!("NodeUUID cannot be empty"));
-        }
+        // if id == 0 {
+        //     return Err(anyhow::anyhow!("NodeUUID cannot be zero"));
+        // }
         if self.id_mapper.contains_key(&id) {
-            return Err(anyhow::anyhow!(
-                "NodeUUID: {} already exists",
-                hex::encode(id)
-            ));
+            return Err(anyhow::anyhow!("NodeUUID: {:032x} already exists", id));
         }
         if !self.node_backend.validate_item(node) {
             return Err(anyhow::anyhow!("Node validation check failed"));
@@ -343,7 +339,6 @@ impl<I: ItemBackend> HNSW<I> {
         // fill them in after finding neighbors
         let node = Node {
             uuid: id,
-            metadata,
             neighbors: vec![Vec::with_capacity(self.max_neighbors); max_level + 1],
             max_level,
             tombstone: false,
@@ -817,24 +812,80 @@ impl<I: ItemBackend> HNSW<I> {
             .collect()
     }
 
-    /// Like [`HNSW::search`] but also returns the `"lazily collected"` metadata bytes stored with each node.
-    /// Returns `Vec<(NodeUUID, f32, Vec<u8>)>` sorted by similarity (highest first).
-    pub fn search_metadata(
-        &self,
-        query: &mut I::Item,
-        k: usize,
-        ef_search: Option<usize>,
-    ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
-        self.search_helper(query, k, ef_search)
-            .into_iter()
-            .map(|(id, sim)| {
-                let node = &self.node_list[id];
-                (node.uuid, sim, node.metadata.clone())
+    // /// Like [`HNSW::search`] but also returns the `"lazily collected"` metadata bytes stored with each node.
+    // /// Returns `Vec<(NodeUUID, f32, Vec<u8>)>` sorted by similarity (highest first).
+    // pub fn search_metadata(
+    //     &self,
+    //     query: &mut I::Item,
+    //     k: usize,
+    //     ef_search: Option<usize>,
+    // ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
+    //     self.search_helper(query, k, ef_search)
+    //         .into_iter()
+    //         .map(|(id, sim)| {
+    //             let node = &self.node_list[id];
+    //             (node.uuid, sim, node.metadata.clone())
+    //         })
+    //         .collect()
+    // }
+
+    /// Brute-force parallel search for testing and validation.
+    /// Scans *all* non-tombstoned nodes using `rayon`, so O(N). Use [`HNSW::search`] for real usage.
+    #[inline]
+    pub fn brute_search(&self, query: &mut I::Item, k: usize) -> Vec<(NodeUUID, f32)> {
+        self.node_backend.search_modify(query);
+        let mut results: Vec<(NodeUUID, f32)> = self
+            .node_list
+            .par_iter()
+            .enumerate()
+            .filter(|(_, node)| !node.tombstone)
+            .map(|(i, node)| {
+                (
+                    node.uuid,
+                    self.node_backend
+                        .similarity(query, self.node_backend.get(i)),
+                )
             })
-            .collect()
+            .collect();
+
+        results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+        results.truncate(k);
+
+        results
     }
 
-    /// Internal helper: loop that grows `ef` until we have `k` non-tombstoned results and the
+    // /// Brute-force parallel search with metadata included in results.
+    // /// Returns similar to [HNSW::search_metadata].
+    // #[inline]
+    // pub fn brute_search_metadata(
+    //     &self,
+    //     query: &mut I::Item,
+    //     k: usize,
+    // ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
+    //     use rayon::iter::*;
+    //     self.node_backend.search_modify(query);
+    //     let mut results: Vec<(NodeUUID, f32, Vec<u8>)> = self
+    //         .node_list
+    //         .par_iter()
+    //         .enumerate()
+    //         .filter(|(_, node)| !node.tombstone)
+    //         .map(|(i, node)| {
+    //             (
+    //                 node.uuid,
+    //                 self.node_backend
+    //                     .similarity(query, self.node_backend.get(i)),
+    //                 node.metadata.clone(),
+    //             )
+    //         })
+    //         .collect();
+    //
+    //     results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+    //     results.truncate(k);
+    //
+    //     results
+    // }
+
+    /// Internally loops that grows `ef` until we have `k` non-tombstoned results and the
     /// kth similarity "stabilizes" (or we hit `max_ef`).
     #[inline(always)]
     fn search_helper(
@@ -884,63 +935,6 @@ impl<I: ItemBackend> HNSW<I> {
         }
     }
 
-    /// Brute-force parallel search for testing and validation.
-    /// Scans *all* non-tombstoned nodes using rayon, so O(N). Use [`HNSW::search`] for real usage.
-    #[inline]
-    pub fn brute_search(&self, query: &mut I::Item, k: usize) -> Vec<(NodeUUID, f32)> {
-        use rayon::iter::*;
-        self.node_backend.search_modify(query);
-        let mut results: Vec<(NodeUUID, f32)> = self
-            .node_list
-            .par_iter()
-            .enumerate()
-            .filter(|(_, node)| !node.tombstone)
-            .map(|(i, node)| {
-                (
-                    node.uuid,
-                    self.node_backend
-                        .similarity(query, self.node_backend.get(i)),
-                )
-            })
-            .collect();
-
-        results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
-        results.truncate(k);
-
-        results
-    }
-
-    /// Brute-force parallel search with metadata included in results.
-    /// Returns similar to [HNSW::search_metadata].
-    #[inline]
-    pub fn brute_search_metadata(
-        &self,
-        query: &mut I::Item,
-        k: usize,
-    ) -> Vec<(NodeUUID, f32, Vec<u8>)> {
-        use rayon::iter::*;
-        self.node_backend.search_modify(query);
-        let mut results: Vec<(NodeUUID, f32, Vec<u8>)> = self
-            .node_list
-            .par_iter()
-            .enumerate()
-            .filter(|(_, node)| !node.tombstone)
-            .map(|(i, node)| {
-                (
-                    node.uuid,
-                    self.node_backend
-                        .similarity(query, self.node_backend.get(i)),
-                    node.metadata.clone(),
-                )
-            })
-            .collect();
-
-        results.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
-        results.truncate(k);
-
-        results
-    }
-
     /// Get entry point node, returns None if no entry point or if entry point is tombstoned
     #[inline]
     pub fn get_entry_point(&self) -> Option<&Node> {
@@ -949,11 +943,11 @@ impl<I: ItemBackend> HNSW<I> {
             .filter(|&node| !node.tombstone)
     }
 
-    /// Get node by node ID, returns None if not found or tombstoned
+    /// Get node by node UUID, returns None if not found or tombstoned
     #[inline]
-    pub fn get_node(&self, uuid: &[u8; 32]) -> Option<&Node> {
+    pub fn get_node(&self, uuid: NodeUUID) -> Option<&Node> {
         self.id_mapper
-            .get(uuid)
+            .get(&uuid)
             .and_then(|&id| self.node_list.get(id))
             .filter(|&node| !node.tombstone)
     }
@@ -980,9 +974,9 @@ impl<I: ItemBackend> HNSW<I> {
 
     /// Returns the item for the given node UUID, or None if not found or tombstoned
     #[inline]
-    pub fn get_item(&self, uuid: &[u8; 32]) -> Option<&I::Item> {
+    pub fn get_item(&self, uuid: NodeUUID) -> Option<&I::Item> {
         self.id_mapper
-            .get(uuid)
+            .get(&uuid)
             .and_then(|&id| self.node_list.get(id).map(|node| (id, node)))
             .filter(|(_, node)| !node.tombstone)
             .map(|(id, _)| self.node_backend.get(id))
@@ -1018,15 +1012,15 @@ impl<I: ItemBackend> HNSW<I> {
     /// Use [`HNSW::tombstone_ratio`] to monitor accumulated tombstones and trigger reindexing.
     /// Returns `Err` if the UUID does not exist in the graph.
     #[inline(always)]
-    pub fn delete_node(&mut self, uuid: &[u8; 32]) -> Result<()> {
-        let node_idx = if let Some(idx) = self.id_mapper.get(uuid).copied() {
+    pub fn delete_node(&mut self, uuid: NodeUUID) -> Result<()> {
+        let node_idx = if let Some(idx) = self.id_mapper.get(&uuid).copied() {
             if let Some(node) = self.node_list.get_mut(idx) {
-                // rm from id_mapper
+                // mark tombstone
                 node.tombstone = true;
             }
             idx
         } else {
-            return Err(anyhow::anyhow!("NodeUUID: {} not found", hex::encode(uuid)));
+            return Err(anyhow::anyhow!("NodeUUID: {:032x} not found", uuid));
         };
 
         // find and sets new entry point when the current one is deleted,
@@ -1065,7 +1059,6 @@ impl<I: ItemBackend> HNSW<I> {
     /// Returns the total memory usage of the graph in bytes, including everything
     #[inline]
     pub fn mem_size(&self) -> usize {
-        use rayon::iter::*;
         let node_size = size_of::<Node>();
         let neighbors_size: usize = self
             .node_list
@@ -1154,17 +1147,18 @@ impl<I: ItemBackend> HNSW<I> {
 /// Alias for node index type, used for indexing into the `node_list`.
 pub type NodeIndex = usize;
 
-/// Unique 256-bit identifier for a node, provided at insertion time.
-/// Stable across reindexing — the same UUID always refers to the same "logical" item.
-pub type NodeUUID = [u8; 32];
+/// Unique 128-bit identifier for a node, provided at insertion time.
+/// Stable across reindexing — the same UUID always refers to the same `logical` item.
+pub type NodeUUID = u128;
 
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
-/// A node in the HNSW graph: UUID, metadata, neighbor lists per layer, and a tombstone flag.
+/// A node in the HNSW graph: UUID, neighbor lists per layer, and a tombstone flag.
+///
+/// > **Note:** Metadata is not part of the graph index. Users manage metadata separately
+/// > via their own mapping (e.g. `HashMap<NodeUUID, T>`), or some external storage backend.
 pub struct Node {
     /// Unique Stable Identifier for the node, provided during insertion
     pub uuid: NodeUUID,
-    /// Metadata associated with the node
-    pub metadata: Vec<u8>,
     /// Neighbors per layer, e.g `neighbors[0]` is the list of neighbors in layer 0
     pub neighbors: Vec<Vec<NodeIndex>>,
     /// The highest layer this node exists in
