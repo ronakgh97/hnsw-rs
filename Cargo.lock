@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "tiny-hnsw"
-version = "1.0.0-alpha.7"
+version = "1.8.0"
 dependencies = [
  "ahash",
  "anyhow",

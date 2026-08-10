@@ -1,5 +1,5 @@
 /target
 .idea
 experimental_dataset/
-/bench/bench_*
+/bench/cache/
 resnet50.onnx

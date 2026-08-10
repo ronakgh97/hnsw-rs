@@ -4,15 +4,18 @@ use arrow::array::{Array, Float64Array, ListArray};
 use hnsw_rs::hnsw::NodeUUID;
 use memmap2::MmapMut;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use plotters::prelude::*;
 use std::fs;
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 pub const DATASET_CACHE: &str = "./bench/cache/bench_data.bin";
-pub const INDEX_CACHE_F32: &str = "./bench/bench_index_f32.bin";
-pub const INDEX_CACHE_I8: &str = "./bench/bench_index_i8.bin";
+pub const INDEX_CACHE_F32: &str = "./bench/cache/bench_index_f32.bin";
+pub const INDEX_CACHE_I8: &str = "./bench/cache/bench_index_i8.bin";
 
+#[allow(unused)]
+/// BenchMetrics enum to represent different benchmark metrics
 pub enum BenchMetrics {
     QRSVaryingEF,
     RecallVaryingK,
@@ -22,6 +25,7 @@ pub enum BenchMetrics {
     RecallVaryingMHeuristic,
 }
 
+/// BenchmarkResult struct to hold benchmark results data
 pub struct BenchmarkResult {
     pub metrics: BenchMetrics,
     pub x_y: Vec<(f64, f64)>,
@@ -121,7 +125,6 @@ pub fn write_compact_datasets(input: PathBuf, num_files: usize) -> Result<()> {
     Ok(())
 }
 
-#[inline]
 /// Loads compact vectors, format: [num_vectors: u32][dim: u32][vectors: f32...]
 /// Returns (num_vectors, dim, mmap_mut)
 pub fn load_vectors_mmap(path: PathBuf) -> Result<(usize, usize, MmapMut)> {
@@ -164,4 +167,92 @@ pub fn compare_recall_at_k(
         }
     }
     hits as f32 / k as f32
+}
+
+/// Plot benchmark results [`BenchmarkResult`], empty results will be marked as "N/A", and save to output path
+pub fn plot_bench(benchmark_results: Vec<BenchmarkResult>, output: PathBuf) -> Result<()> {
+    let root = BitMapBackend::new(&output, (1800, 1200)).into_drawing_area();
+    root.fill(&BLACK)?;
+
+    let chart_area = root.split_evenly((3, 2)).into_iter().enumerate();
+
+    for (idx, area) in chart_area {
+        let (_x_label, _y_label, color, label) = match benchmark_results.get(idx) {
+            Some(BenchmarkResult { metrics, .. }) => match metrics {
+                BenchMetrics::QRSVaryingEF => ("EF", "QPS", RED, "Search Varying EF"),
+                BenchMetrics::RecallVaryingK => ("K", "Recall@K", BLUE, "Recall Varying K"),
+                BenchMetrics::BuildTimeVaryingM => (
+                    "M",
+                    "Build Time (s)",
+                    GREEN,
+                    "Build Time vs M (Simple selection)",
+                ),
+                BenchMetrics::RecallVaryingM => {
+                    ("M", "Recall@K", YELLOW, "Recall vs M (Simple selection)")
+                }
+                BenchMetrics::BuildTimeVaryingMHeuristic => (
+                    "M",
+                    "Build Time (s)",
+                    CYAN,
+                    "Build Time vs M (Heuristic selection)",
+                ),
+                BenchMetrics::RecallVaryingMHeuristic => (
+                    "M",
+                    "Recall@K",
+                    MAGENTA,
+                    "Recall vs M (Heuristic selection)",
+                ),
+            },
+            None => ("X", "Y", GREEN, "N/A"),
+        };
+
+        let (x_range, y_range) = if let Some(result) = benchmark_results.get(idx) {
+            let xs: Vec<f64> = result.x_y.iter().map(|(x, _)| *x).collect();
+            let ys: Vec<f64> = result.x_y.iter().map(|(_, y)| *y).collect();
+            let x_min = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let x_max = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let y_min = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+            let y_max = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let x_padding = (x_max - x_min) * 0.1;
+            let y_padding = (y_max - y_min) * 0.1;
+            (
+                (x_min - x_padding)..(x_max + x_padding),
+                (y_min - y_padding)..(y_max + y_padding),
+            )
+        } else {
+            (0f64..1000f64, 0f64..1000f64)
+        };
+
+        let mut chart = ChartBuilder::on(&area)
+            .caption(label, ("0xProto Nerd Font", 20).into_font().color(&color))
+            .x_label_area_size(40)
+            .y_label_area_size(60)
+            .margin(20)
+            .build_cartesian_2d(x_range, y_range)?;
+
+        chart
+            .configure_mesh()
+            .label_style(("0xProto Nerd Font", 14).into_font().color(&WHITE))
+            .axis_desc_style(("0xProto Nerd Font", 16).into_font().color(&WHITE))
+            .x_desc(_x_label)
+            .y_desc(_y_label)
+            .bold_line_style(WHITE.mix(0.3))
+            .light_line_style(WHITE.mix(0.15))
+            .draw()?;
+
+        if let Some(result) = benchmark_results.get(idx) {
+            chart.draw_series(LineSeries::new(result.x_y.clone(), color))?;
+
+            chart.draw_series(
+                result
+                    .x_y
+                    .iter()
+                    .map(|(x, y)| (*x, *y))
+                    .map(|pos| Circle::new(pos, 5, color.filled())),
+            )?;
+        }
+    }
+
+    root.present()?;
+    Ok(())
 }
