@@ -217,7 +217,9 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     }
 
     // reduce scalar
-    let mut total_sum = f32x8::reduce_add((sum0 + sum1) + (sum2 + sum3));
+    let total_sum1 = f32x8::reduce_add(sum0 + sum1);
+    let total_sum2 = f32x8::reduce_add(sum2 + sum3);
+    let mut total_sum = total_sum1 + total_sum2;
 
     // handle remainder
     for i in reminder_range {
@@ -349,7 +351,7 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
 
     // handle remainder
     for i in reminder_range {
-        let diff = a[i] - b[i];
+        let diff = a[i].algebraic_sub(b[i]);
         dist = diff.mul_add(diff, dist);
     }
 
@@ -416,7 +418,7 @@ pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
 
     // handle remainder
     for i in reminder_range {
-        let diff = a[i] as f32 - b[i] as f32;
+        let diff = (a[i] as f32).algebraic_sub(b[i] as f32);
         dist = diff.mul_add(diff, dist);
     }
 
@@ -498,7 +500,7 @@ pub fn normalize_l2(v: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[inline]
 /// Multiply two f32 matrices using 4 portable `SIMD` registers at a time, returning the resulting matrix.
 /// The matrices are expected to be in row-major order and the dimensions must match for multiplication, otherwise it will UB.
 /// _Peak performance is not guaranteed on `non-x86_64` arch_.
@@ -527,7 +529,7 @@ pub fn matmul(
     result
 }
 
-#[inline(always)]
+#[inline]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::missing_safety_doc)]
 /// In-place SIMD-optimized matmul, the result is stored in the `result` slice, which must be pre-allocated to the correct size (rows_a * cols_b).
@@ -649,10 +651,10 @@ pub unsafe fn matmul_into(
                         }
 
                         // single writeback
-                        result[base] += sum0;
-                        result[base + 1] += sum1;
-                        result[base + 2] += sum2;
-                        result[base + 3] += sum3;
+                        result[base] = result[base].algebraic_add(sum0);
+                        result[base + 1] = result[base + 1].algebraic_add(sum1);
+                        result[base + 2] = result[base + 2].algebraic_add(sum2);
+                        result[base + 3] = result[base + 3].algebraic_add(sum3);
                     }
 
                     // handle remaining columns that don't fit into a 4-column block (32 elements)
@@ -688,7 +690,7 @@ pub unsafe fn matmul_into(
                             t += 1;
                         }
 
-                        result[base] += sum;
+                        result[base] = result[base].algebraic_add(sum);
                     }
                 }
             }
@@ -719,7 +721,7 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
             let i_max = (ii + TILE).min(rows);
             let j_max = (jj + TILE).min(cols);
 
-            // tile blocking
+            // tiled, cache blocking
             for i in ii..i_max {
                 for j in jj..j_max {
                     unsafe {

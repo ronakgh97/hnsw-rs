@@ -96,7 +96,7 @@ fn main() -> Result<()> {
                 }
                 let elapsed = time.elapsed();
                 println!(
-                    "Search with ef: {} took, QPS: {:.2}",
+                    "Search with ef: {}, QPS: {:.2}",
                     ef,
                     query_count as f64 / elapsed.as_secs_f64()
                 );

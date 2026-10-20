@@ -341,7 +341,7 @@ pub fn euclidean_similarity(a: &[f32], b: &[f32]) -> f32 {
     };
 
     for i in reminder_range {
-        let d = a[i] - b[i];
+        let d = a[i].algebraic_sub(b[i]);
         dist = d.mul_add(d, dist);
     }
 
@@ -407,7 +407,7 @@ pub fn euclidean_similarity_i8(a: &[i8], b: &[i8]) -> f32 {
     };
 
     for i in reminder_range {
-        let d = a[i] as f32 - b[i] as f32;
+        let d = (a[i] as f32).algebraic_sub(b[i] as f32);
         dist = d.mul_add(d, dist);
     }
 
@@ -488,7 +488,7 @@ pub fn normalize_l2(v: &mut [f32]) {
     }
 }
 
-#[inline(always)]
+#[inline]
 /// SIMD-optimized matrix multiplication for f32 matrices, using `AVX2` intrinsics for `x86_64` arch,
 /// returns a new matrix, `matrix_a` must be of size `rows_a x cols_a`, `matrix_b` must be of size `rows_b x cols_b`, and `cols_a` must equal `rows_b`
 pub fn matmul(
@@ -516,7 +516,7 @@ pub fn matmul(
     result
 }
 
-#[inline(always)]
+#[inline]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::missing_safety_doc)]
 /// SIMD-optimized in-place matrix (row-major) multiplication for f32 matrices, using `AVX2` intrinsics for `x86_64` arch,
@@ -681,7 +681,7 @@ pub unsafe fn transpose_mat_into(rows: usize, cols: usize, input: &[f32], output
 }
 
 #[inline(always)]
-/// 8×8 in-register matrix transpose micro-kernel using `AVX2`. _MY HANDS ARE UP, I JUST COPY-PASTE FROM [Source](https://docs.rs/aprender-compute/0.63.0/src/trueno/blis/transpose.rs.html#50)_
+/// 8×8 in-register matrix transpose micro-kernel using `AVX2`.
 unsafe fn transpose_8x8_avx2(src: *const f32, src_stride: usize, dst: *mut f32, dst_stride: usize) {
     unsafe {
         // load 8 source rows
@@ -704,7 +704,7 @@ unsafe fn transpose_8x8_avx2(src: *const f32, src_stride: usize, dst: *mut f32, 
         let t6 = _mm256_unpacklo_ps(r6, r7);
         let t7 = _mm256_unpackhi_ps(r6, r7);
 
-        // shuffle 64-bit pairs inside 128-bit lanes using 0x44 and 0xEE
+        // shuffle 64-bit pairs inside 128-bit lanes using control byte
         let u0 = _mm256_shuffle_ps(t0, t2, 0x44);
         let u1 = _mm256_shuffle_ps(t0, t2, 0xEE);
         let u2 = _mm256_shuffle_ps(t1, t3, 0x44);
@@ -714,7 +714,7 @@ unsafe fn transpose_8x8_avx2(src: *const f32, src_stride: usize, dst: *mut f32, 
         let u6 = _mm256_shuffle_ps(t5, t7, 0x44);
         let u7 = _mm256_shuffle_ps(t5, t7, 0xEE);
 
-        // cross 128-bit lane permute
+        // 'cross' 128-bit lane permute
         let v0 = _mm256_permute2f128_ps(u0, u4, 0x20);
         let v1 = _mm256_permute2f128_ps(u1, u5, 0x20);
         let v2 = _mm256_permute2f128_ps(u2, u6, 0x20);
