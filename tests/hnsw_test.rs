@@ -226,3 +226,27 @@ fn test_hnsw_simple_selection_opt_in() {
     let results = hnsw.search(vg.get_mut(50), 10, Some(64));
     assert_eq!(results.len(), 10);
 }
+
+#[test]
+fn perf_regression() {
+    const NUM: usize = 3272;
+    let mut hnsw: VectorHnsw = make_hnsw(512);
+    let mut sample_vector = VectorGen::generate(NUM, 512, None);
+    let start = std::time::Instant::now();
+    for i in 0..NUM {
+        let id = gen_uuid();
+        let level = hnsw.get_random_level();
+        hnsw.insert(id, sample_vector.get_mut(i), level).unwrap();
+    }
+    let duration = start.elapsed();
+    assert!(duration < std::time::Duration::from_millis(500));
+
+    let start = std::time::Instant::now();
+    for i in 0..3989 {
+        let idx = (i * 6969) % NUM;
+        let results = hnsw.search(sample_vector.get_mut(idx), 5, None);
+        assert_eq!(results.len(), 5);
+    }
+    let duration = start.elapsed();
+    assert!(duration < std::time::Duration::from_millis(500));
+}

@@ -55,6 +55,6 @@ fastrand = "2.5.0"
 # aligned-vec = "0.6.4"
 
 [dev-dependencies]
-arrow = "60.0.0"
-parquet = "60.0.0"
+arrow = "60.1.0"
+parquet = "60.1.0"
 plotters = "0.3.7"

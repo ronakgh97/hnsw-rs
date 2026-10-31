@@ -16,49 +16,62 @@ use rayon::prelude::*;
 //     (result, base_seed + num)
 // }
 
-/// Random Vector generator, with optimal cache access and temp storage
+/// Random sample vector generator
 pub struct VectorGen {
+    vector_dim: usize,
     flat_vectors: Vec<f32>,
-    dim: usize,
 }
 
 impl VectorGen {
     /// Generate & store f32 vectors in flat layout
-    /// [Curse of dimensionality](https://en.wikipedia.org/wiki/Curse_of_dimensionality) is still a problem, but this is a good start for testing
-    pub fn generate(num: usize, dim: usize, seed: Option<u64>) -> Self {
-        let seed = seed.unwrap_or_else(|| fastrand::u64(0..=u64::MAX));
+    /// [`Curse of dimensionality`](https://en.wikipedia.org/wiki/Curse_of_dimensionality) is still a problem, but this is a good start for testing
+    pub fn generate(num: usize, vector_dim: usize, seed: Option<u64>) -> Self {
+        let seed = if let Some(seed) = seed {
+            seed
+        } else {
+            fastrand::u64(0..=u64::MAX)
+        };
 
-        let mut flat_vectors = vec![0.0f32; num * dim];
+        let mut flat_vectors = vec![0.0f32; num * vector_dim];
         flat_vectors.par_iter_mut().enumerate().for_each(|(i, x)| {
             let mut rng = fastrand::Rng::with_seed(seed + i as u64);
             *x = rng.f32_inclusive() * 2.0 - 1.0;
         });
 
-        Self { flat_vectors, dim }
+        Self {
+            flat_vectors,
+            vector_dim,
+        }
     }
 
     #[inline(always)]
-    /// Returns a vector at given index as an immutable slice, zero-copy into flat buffer
+    /// Returns a vector at given index as an immutable slice
     pub fn get(&self, index: usize) -> &[f32] {
-        let start = index * self.dim;
+        let start = index * self.vector_dim;
         assert!(
-            start + self.dim <= self.flat_vectors.len(),
+            start + self.vector_dim <= self.flat_vectors.len(),
             "VectorGen: index {} out of bounds",
             index
         );
-        unsafe { self.flat_vectors.get_unchecked(start..start + self.dim) }
+        unsafe {
+            self.flat_vectors
+                .get_unchecked(start..start + self.vector_dim)
+        }
     }
 
     #[inline(always)]
-    /// Returns a vector at given index as a mutable slice, zero-copy into flat buffer
+    /// Returns a vector at given index as a mutable slice
     pub fn get_mut(&mut self, index: usize) -> &mut [f32] {
-        let start = index * self.dim;
+        let start = index * self.vector_dim;
         assert!(
-            start + self.dim <= self.flat_vectors.len(),
+            start + self.vector_dim <= self.flat_vectors.len(),
             "VectorGen: index {} out of bounds",
             index
         );
-        unsafe { self.flat_vectors.get_unchecked_mut(start..start + self.dim) }
+        unsafe {
+            self.flat_vectors
+                .get_unchecked_mut(start..start + self.vector_dim)
+        }
     }
 }
 
