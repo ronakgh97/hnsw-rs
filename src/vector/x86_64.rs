@@ -1,6 +1,5 @@
 use std::arch::x86_64::*;
 
-#[macro_export]
 /// Horizontal sum of i32x8 `__m256i` vector, returning a single `i32` value, could overflow
 macro_rules! hsum_i32x8 {
     ($v:expr) => {{
@@ -13,7 +12,6 @@ macro_rules! hsum_i32x8 {
     }};
 }
 
-#[macro_export]
 /// Multiply two i8x32 `__m256i` vectors (preserve sign) and return it as packed i32x8 `__m256i` vector.
 ///
 /// All elements must be in `[-127, 127]`. A value of `-128` produces incorrect results:
@@ -30,7 +28,6 @@ macro_rules! i8x32_dot_i32x8 {
     };
 }
 
-#[macro_export]
 /// Horizontal sum of f32x8 `__m256d` vector, returning a single `f32` value, could overflow
 macro_rules! hsum_f32x8 {
     ($v:expr) => {{

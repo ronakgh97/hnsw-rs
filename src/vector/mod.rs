@@ -27,9 +27,9 @@ pub enum Metrics {
 }
 
 impl Metrics {
-    #[inline]
-    /// Calculate similarity between two vectors based on the selected metric
-    pub fn calculate_sim(&self, a: &[f32], b: &[f32]) -> f32 {
+    #[inline(always)]
+    /// Calculate similarity between two f32 vectors based on the selected metric
+    pub fn calculate_sim_f32(&self, a: &[f32], b: &[f32]) -> f32 {
         match self {
             Metrics::Cosine => cosine_similarity(a, b),
             Metrics::Euclidean => euclidean_similarity(a, b),
@@ -37,18 +37,19 @@ impl Metrics {
         }
     }
 
-    #[inline]
-    /// Calculate distance between two vectors based on the selected metric
-    pub fn calculate_dist(&self, a: &[f32], b: &[f32]) -> f32 {
+    #[inline(always)]
+    /// Calculate distance between two f32 vectors based on the selected metric
+    pub fn calculate_dist_f32(&self, a: &[f32], b: &[f32]) -> f32 {
         match self {
             Metrics::Cosine => 1.0 - cosine_similarity(a, b),
-            Metrics::Euclidean => 1.0 / (euclidean_similarity(a, b) - 1.0),
+            // euclidean_similarity = 1/(1+dist), so invert it to recover the distance
+            Metrics::Euclidean => 1.0 / euclidean_similarity(a, b) - 1.0,
             Metrics::RawDot => -dot_product(a, b),
         }
     }
 
-    #[inline]
-    /// Calculate similarity between two i8 vectors based on the selected metric
+    #[inline(always)]
+    /// Calculate similarity between two i8 vectors based on the selected metric, similar to `calculate_sim` but for quantized vectors.
     pub fn calculate_sim_i8(&self, a: &[i8], b: &[i8]) -> f32 {
         match self {
             Metrics::Cosine => cosine_similarity_i8(a, b),
@@ -57,12 +58,13 @@ impl Metrics {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     /// Calculate distance between two i8 vectors based on the selected metric
     pub fn calculate_dist_i8(&self, a: &[i8], b: &[i8]) -> f32 {
         match self {
             Metrics::Cosine => 1.0 - cosine_similarity_i8(a, b),
-            Metrics::Euclidean => 1.0 / (euclidean_similarity_i8(a, b) - 1.0),
+            // euclidean_similarity_i8 = 1/(1+dist), so invert it to recover the distance
+            Metrics::Euclidean => 1.0 / euclidean_similarity_i8(a, b) - 1.0,
             Metrics::RawDot => -dot_product_i8(a, b),
         }
     }

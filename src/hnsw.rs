@@ -10,48 +10,50 @@ use wincode::{SchemaRead, SchemaWrite};
 // like stored externally so then fetching metadata are not our concerns,
 // also could be integrated with other storage backends :)
 
-/// Simple bitset backed for tracking visited nodes during graph traversal instead of `HashSet`.
-struct BitSet {
-    bits: Vec<u64>,
+/// Simple bitset backed for tracking visited nodes
+/// during graph traversal instead of `HashSet`
+struct VisitedSet {
+    r#gen: u32,
+    visited: Vec<(u32, u64)>,
 }
 
-impl BitSet {
-    #[inline(always)]
+impl VisitedSet {
     fn with_capacity(n: usize) -> Self {
         let words = n.div_ceil(64);
         Self {
-            bits: vec![0u64; words],
+            r#gen: 0,
+            visited: vec![(0, 0u64); words],
         }
     }
 
-    /// Clears the bitset by resetting all bits to 0
     #[inline(always)]
-    fn reset(&mut self) {
-        self.bits.fill(0);
+    fn next(&mut self) {
+        self.r#gen = self.r#gen.wrapping_add(1);
+        if self.r#gen == 0 {
+            for w in &mut self.visited {
+                w.0 = 0;
+            }
+            self.r#gen = 1;
+        }
     }
 
-    /// Returns true if the bit was newly set (not already set).
     #[inline(always)]
     fn insert(&mut self, idx: usize) -> bool {
-        let word = idx >> 6;
-        let bit_idx = idx & 63;
-        let bit = 1u64 << bit_idx;
-
-        unsafe {
-            #[rustfmt::skip]
-            let chunk =
-                self.bits.get_unchecked_mut(word);
-
-            let old = *chunk;
-            *chunk = old | bit;
-            (old & bit) == 0
+        let w = unsafe { &mut self.visited.get_unchecked_mut(idx >> 6) };
+        if w.0 != self.r#gen {
+            w.0 = self.r#gen;
+            w.1 = 0;
         }
+        let bit = 1u64 << (idx & 63);
+        let fresh = w.1 & bit == 0;
+        w.1 |= bit;
+        fresh
     }
 }
 
 /// Reusable scratch buffers for `search_layer_knn` to avoid per-call allocations.
 struct SearchScratch {
-    visited: BitSet,
+    visited: VisitedSet,
     candidates: BinaryHeap<Candidate>,
     results: BinaryHeap<ScoredResult>,
     result_buf: Vec<(NodeIndex, f32)>,
@@ -60,7 +62,7 @@ struct SearchScratch {
 impl SearchScratch {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            visited: BitSet::with_capacity(capacity),
+            visited: VisitedSet::with_capacity(capacity),
             candidates: BinaryHeap::with_capacity(capacity),
             results: BinaryHeap::with_capacity(capacity),
             result_buf: Vec::with_capacity(capacity),
@@ -68,7 +70,7 @@ impl SearchScratch {
     }
 
     fn clear(&mut self) {
-        self.visited.reset();
+        self.visited.next();
         self.candidates.clear();
         self.results.clear();
         self.result_buf.clear();
@@ -617,9 +619,10 @@ impl<I: ItemBackend> HNSW<I> {
         let capacity = ef.saturating_mul(2).max(1);
         let max_nodes = self.node_list.len();
 
+        // clear and resize scratch buffers as needed, b4 starting search
         scratch.clear();
-        if scratch.visited.bits.len() * 64 < max_nodes {
-            scratch.visited = BitSet::with_capacity(max_nodes);
+        if scratch.visited.visited.len() * 64 < max_nodes {
+            scratch.visited = VisitedSet::with_capacity(max_nodes);
         }
         if scratch.candidates.capacity() < capacity {
             scratch.candidates = BinaryHeap::with_capacity(capacity);

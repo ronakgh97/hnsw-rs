@@ -1,6 +1,6 @@
 [package]
 name = "tiny-hnsw"
-version = "1.8.1"
+version = "1.8.2"
 edition = "2024"
 authors = ["ronakgh {ronakgh97@gmail.com}"]
 description = "A simplified implementation of the HNSW (Hierarchical Navigable Small World) algorithm for efficient approximate nearest neighbor search."
@@ -34,27 +34,26 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-incremental = false
 debug = false
 
 [profile.dev]
 opt-level = 1
 debug = true
-incremental = true
 
 [dependencies]
 wincode = { version = "0.6.3", features = ["derive"] }
 memmap2 = "0.9.11"
-ahash = "0.8.12"
-wide = "1.7.1"
+ahash = "0.8.13"
 rayon = "1.12.0"
 sha2 = "0.11.1"
-anyhow = "1.0.104"
+anyhow = "1.0.105"
 hex = "0.4.3"
 fastrand = "2.5.0"
-# aligned-vec = "0.6.4"
+
+[target.'cfg(not(target_arch = "x86_64"))'.dependencies]
+wide = "1.7.1"
 
 [dev-dependencies]
-arrow = "60.1.0"
-parquet = "60.1.0"
+arrow = "60.2.0"
+parquet = "60.2.0"
 plotters = "0.3.7"

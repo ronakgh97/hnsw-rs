@@ -73,7 +73,7 @@ pub trait ItemBackend: Send + Sync {
     /// Check if the store is empty.
     fn is_empty(&self) -> bool;
 
-    /// Get the memory size of the store in bytes.
+    /// Get the memory size of the store (not graph overhead) in bytes.
     fn mem_size(&self) -> usize;
 
     /// Compute similarity score between two items.
@@ -91,7 +91,7 @@ pub type VectorHnsw = HNSW<FlatVectorStore>;
 /// Convenience type alias for 8-bit quantized vector HNSW.
 pub type Vector8bitHnsw = HNSW<FlatI8VectorStore>;
 
-/// A flat vector store that holds 32-bit vectors in a contiguous memory layout.
+/// A flat vector store that holds f32-bit vectors in a contiguous memory layout.
 /// This implements [ItemBackend] trait also derives [wincode::SchemaRead] & [wincode::SchemaWrite] and is specifically optimized for vector search ops.
 #[derive(SchemaRead, SchemaWrite)]
 pub struct FlatVectorStore {
@@ -168,7 +168,10 @@ impl ItemBackend for FlatVectorStore {
 
     #[inline(always)]
     fn mem_size(&self) -> usize {
-        size_of::<f32>() * self.flat_vectors.len()
+        self.flat_vectors.len() * size_of::<f32>()
+            + size_of::<Vec<f32>>()
+            + size_of::<usize>()
+            + size_of::<Metrics>()
     }
 
     #[inline(always)]
@@ -181,11 +184,7 @@ impl ItemBackend for FlatVectorStore {
 
     #[inline(always)]
     fn distance(&self, item0: &Self::Item, item1: &Self::Item) -> f32 {
-        match self.metric {
-            Metrics::Cosine => 1.0 - dot_product(item0, item1),
-            Metrics::Euclidean => 1.0 / (euclidean_similarity(item0, item1) - 1.0),
-            Metrics::RawDot => -dot_product(item0, item1),
-        }
+        self.metric.calculate_dist_f32(item0, item1)
     }
 }
 
@@ -282,7 +281,10 @@ impl ItemBackend for FlatI8VectorStore {
 
     #[inline(always)]
     fn mem_size(&self) -> usize {
-        self.flat_vectors.len()
+        self.flat_vectors.capacity() * size_of::<i8>()
+            + size_of::<Vec<i8>>()
+            + size_of::<usize>()
+            + size_of::<Metrics>()
     }
 
     #[inline(always)]
@@ -296,10 +298,6 @@ impl ItemBackend for FlatI8VectorStore {
 
     #[inline(always)]
     fn distance(&self, a: &[i8], b: &[i8]) -> f32 {
-        match self.metric {
-            Metrics::Cosine => 1.0 - cosine_similarity_i8(a, b),
-            Metrics::RawDot => -dot_product_i8(a, b),
-            Metrics::Euclidean => 1.0 / (euclidean_similarity_i8(a, b) - 1.0),
-        }
+        self.metric.calculate_dist_i8(a, b)
     }
 }

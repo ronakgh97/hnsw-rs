@@ -1,6 +1,6 @@
 use hnsw_rs::prelude::*;
 
-// TODO; These are AI-generated tests
+// TODO: These are AI-generated tests
 
 #[test]
 fn test_cosine_similarity_identical_vectors() {
@@ -99,7 +99,7 @@ fn test_metrics_enum_cosine() {
     let metric = Metrics::Cosine;
     let a = vec![1.0, 0.0];
     let b = vec![1.0, 0.0];
-    let sim = metric.calculate_sim(&a, &b);
+    let sim = metric.calculate_sim_f32(&a, &b);
     assert!((sim - 1.0).abs() < 1e-6);
 }
 
@@ -108,7 +108,7 @@ fn test_metrics_enum_euclidean() {
     let metric = Metrics::Euclidean;
     let a = vec![0.0, 0.0];
     let b = vec![3.0, 4.0];
-    let sim = metric.calculate_sim(&a, &b);
+    let sim = metric.calculate_sim_f32(&a, &b);
     assert!((sim - (1.0 / 6.0)).abs() < 1e-6);
 }
 
@@ -117,7 +117,7 @@ fn test_metrics_enum_dot_product() {
     let metric = Metrics::RawDot;
     let a = vec![2.0, 3.0];
     let b = vec![4.0, 5.0];
-    let sim = metric.calculate_sim(&a, &b);
+    let sim = metric.calculate_sim_f32(&a, &b);
     assert!((sim - 23.0).abs() < 1e-6);
 }
 
@@ -143,4 +143,24 @@ fn test_cosine_similarity_aligned_vectors() {
     let b = vec![3.0, 3.0];
     let sim = cosine_similarity(&a, &b);
     assert!((sim - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn test_euclidean_distance_is_inverse_of_similarity() {
+    // similarity = 1/(1+dist) => distance = 1/similarity - 1
+    let a = [0.0, 0.0, 0.0];
+    let b = [3.0, 4.0, 0.0];
+
+    let dist = Metrics::Euclidean.calculate_dist_f32(&a, &b);
+    assert!((dist - 5.0).abs() < 1e-5, "expected 5.0, got {dist}");
+    assert!(Metrics::Euclidean.calculate_dist_f32(&a, &a).abs() < 1e-5);
+
+    let store = FlatVectorStore::init(3, Metrics::Euclidean, 1);
+    assert!((store.distance(&a, &b) - 5.0).abs() < 1e-5);
+
+    let ai = [0i8, 0, 0];
+    let bi = [3i8, 4, 0];
+    assert!((Metrics::Euclidean.calculate_dist_i8(&ai, &bi) - 5.0).abs() < 1e-5);
+    let i8_store = FlatI8VectorStore::init(3, Metrics::Euclidean, 1);
+    assert!((i8_store.distance(&ai, &bi) - 5.0).abs() < 1e-5);
 }

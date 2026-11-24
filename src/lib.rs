@@ -7,16 +7,17 @@
 //!
 //! ## Benchmarks
 //!
-//! ![Bench Graph](https://raw.githubusercontent.com/ronakgh97/hnsw-rs/refs/heads/master/bench/plot.png),
+//! ![Bench Graph](https://raw.githubusercontent.com/ronakgh97/hnsw-rs/refs/heads/master/bench/plot_f32.png),
 //! refer to [this](https://github.com/ronakgh97/hnsw-rs/blob/master/README.md) for more details on benchmarks
 //!
 //! ## Features
 //!
-//! - **Generic**: Pluggable backend via [`ItemBackend`](item::ItemBackend) trait — use [`FlatVectorStore`](item::FlatVectorStore) for vectors (which is specifically optimized using portable SIMD and unsafe code) or implement for any data type (string, locations, images, AST, bioinformatics, any arbitrary quantity etc.)
-//! - **[Wincode Support](https://crates.io/crates/wincode)**: Makes serialization/deserialization efficient, in-place and compact for disk-storage
-//! - **Portable SIMD**: Uses [wide](https://crates.io/crates/wide) for FAST vector operations, with AVX2 optimizations where applicable
-//! - **x86_64 specific optimization**: Uses [core::arch::x86_64](https://doc.rust-lang.org/core/arch/x86_64/index.html) for AVX2 and SSE optimizations for vector operation on x86_64 platforms
-//! - **Parallel Processing**: Uses [rayon](https://crates.io/crates/rayon) for parallel operations where possible
+//! - **Generic**: Pluggable backend via [`ItemBackend`](item::ItemBackend) trait — use [`FlatVectorStore`](item::FlatVectorStore) for vectors (which is specifically optimized using portable SIMD and unsafe code) or implement for any data type (string, locations, images, AST, bioinformatics, any arbitrary quantity etc.).
+//! - **[Wincode Support](https://crates.io/crates/wincode)**: Makes serialization/deserialization efficient, in-place and compact for disk-storage.
+//! - **Portable SIMD**: Uses [wide](https://crates.io/crates/wide) for FAST vector operations, with AVX2 optimizations where applicable.
+//! - **x86_64 specific optimization**: Uses [core::arch::x86_64](https://doc.rust-lang.org/core/arch/x86_64/index.html) for AVX2 and SSE optimizations for vector operation on x86_64 platforms.
+//! - **I8 Quantization**: Supports quantized 8-bit vectors for memory-efficient storage and faster search, with support for cosine similarity, Euclidean distance, and raw dot product and other vector operations.
+//! - **Parallel Processing**: Uses [rayon](https://crates.io/crates/rayon) for parallel operations where possible.
 //!
 //! ## Mini-Example
 //!
@@ -66,6 +67,7 @@ pub mod quant;
 pub mod storage;
 pub mod utils;
 pub mod vector;
+
 pub use wincode::config;
 pub use wincode::{SchemaRead, SchemaWrite};
 
